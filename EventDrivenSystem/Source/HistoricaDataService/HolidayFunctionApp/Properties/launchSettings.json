@@ -1,0 +1,18 @@
+{
+  "profiles": {
+    "HolidayFunctionApp": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7263"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 34762,
+      "useSSL": false
+    },
+    "WSL": {
+      "commandName": "WSL2",
+      "distributionName": ""
+    }
+  }
+}

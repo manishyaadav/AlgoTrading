@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "TopicToCSVConverter": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7180"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 33283,
+      "useSSL": false
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "StrategyService": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7262"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 31852,
+      "useSSL": false
+    }
+  }
+}

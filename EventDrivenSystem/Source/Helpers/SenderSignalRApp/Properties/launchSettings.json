@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "SenderSignalRApp": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7097"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 31461,
+      "useSSL": false
+    }
+  }
+}

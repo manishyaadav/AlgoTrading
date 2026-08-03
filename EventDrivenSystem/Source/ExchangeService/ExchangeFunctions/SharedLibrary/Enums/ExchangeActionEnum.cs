@@ -1,0 +1,18 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace SharedLibrary.Enums
+{
+    public enum ExchangeActionEnum
+    {
+        Init = 1,
+        PreOpen = 2,
+        Open = 3,
+        PreClose = 4,
+        Close = 5,
+        TestEntry = 6
+    }
+}

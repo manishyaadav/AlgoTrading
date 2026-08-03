@@ -1,0 +1,13 @@
+@startuml test
+
+package com.acme.sales.model {
+    class Proposal <<Entity>> {
+        + int: reference
+    }
+    note top of Proposal : Proposal is an Entity that holds all 
+}
+
+title Proposal Class
+namespace com.acme.sales.model  // Specify the full namespace
+footer 
+@enduml

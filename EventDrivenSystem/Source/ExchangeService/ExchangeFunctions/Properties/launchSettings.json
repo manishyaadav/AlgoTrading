@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "ExchangeFunctions": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7092"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 31181,
+      "useSSL": false
+    }
+  }
+}

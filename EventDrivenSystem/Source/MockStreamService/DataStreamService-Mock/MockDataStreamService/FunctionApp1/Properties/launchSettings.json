@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "FunctionApp1": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7285"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 31590,
+      "useSSL": false
+    }
+  }
+}

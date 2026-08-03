@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "AggregatorFunctions": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7210"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 33590,
+      "useSSL": false
+    }
+  }
+}

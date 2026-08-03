@@ -1,0 +1,966 @@
+const REFRESH_MS = 5000;
+
+// Small self-contained icon set (24x24 stroke icons) — no external requests, no icon font/library.
+const ICONS = {
+  stream: `<path d="M4 6h16M4 12h16M4 18h10"/>`,                                   // Kafka / Zookeeper / Kafdrop
+  database: `<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>`, // Redis
+  cloud: `<path d="M7 18a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.5 8a4 4 0 0 1 1.5 7.9"/><path d="M7 18h11"/>`, // Azurite
+  broadcast: `<circle cx="12" cy="12" r="1.8"/><path d="M8.5 8.5a5 5 0 0 0 0 7"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.5 5.5a9 9 0 0 0 0 13"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>`, // SignalR
+  gauge: `<path d="M12 12l4-3"/><circle cx="12" cy="12" r="9"/><path d="M7 15a6 6 0 0 1 10 0"/>`, // Dashboard
+  bolt: `<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"/>`,  // Function apps (dataingestion/holiday/ohlc/country/exchange/aggregation/notification)
+  graph: `<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8 7l7-1M8.5 8l3 8M15.5 8l-3 8"/>`,
+  freshness: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>`,
+  sun: `<circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.5 12h-3M22.5 12h-3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>`,
+  moon: `<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>`,
+  columns: `<rect x="3" y="4" width="6" height="16" rx="1"/><rect x="9.5" y="4" width="6" height="16" rx="1"/><rect x="16" y="4" width="5" height="16" rx="1"/>`,
+  rows: `<rect x="3" y="3" width="18" height="5.3" rx="1"/><rect x="3" y="9.3" width="18" height="5.3" rx="1"/><rect x="3" y="15.7" width="18" height="5.3" rx="1"/>`,
+  // colorful category icons
+  stack: `<rect x="4" y="3.5" width="16" height="5" rx="1.3"/><rect x="4" y="10" width="16" height="5" rx="1.3"/><rect x="4" y="16.5" width="16" height="4.5" rx="1.3"/><circle cx="7.3" cy="6" r="0.7" fill="currentColor" stroke="none"/><circle cx="7.3" cy="12.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="7.3" cy="18.7" r="0.7" fill="currentColor" stroke="none"/>`,
+  wrench: `<path d="M21 7.2a5.3 5.3 0 0 1-7.3 4.9L6 19.8l-2-2 7.7-7.7A5.3 5.3 0 1 1 21 7.2z"/>`,
+  chip: `<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 3v2.3M12 3v2.3M15 3v2.3M9 18.7V21M12 18.7V21M15 18.7V21M3 9h2.3M3 12h2.3M3 15h2.3M18.7 9H21M18.7 12H21M18.7 15H21"/>`,
+  // left-nav icons
+  target: `<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.8"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>`,
+  sync: `<path d="M4.5 12a7.5 7.5 0 0 1 13-5.2M17.5 3.5v4.3h-4.3"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5.2M6.5 20.5v-4.3h4.3"/>`,
+  history: `<path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3"/><path d="M3.5 3.8v4.3h4.3"/><path d="M12 8v4.5l3 2"/>`,
+  sliders: `<path d="M4 6h6M14 6h6M4 12h10M18 12h2M4 18h13M21 18h0"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="19" cy="18" r="2"/>`,
+  bell: `<path d="M6.5 8.5a5.5 5.5 0 0 1 11 0c0 4.5 1.8 5.8 1.8 5.8H4.7s1.8-1.3 1.8-5.8z"/><path d="M9.7 18a2.3 2.3 0 0 0 4.6 0"/>`,
+};
+
+function iconFor(composeService) {
+  const n = (composeService || "").toLowerCase();
+  if (n.includes("kafka") || n.includes("zookeeper") || n.includes("kafdrop")) return "stream";
+  if (n.includes("redis")) return "database";
+  if (n.includes("azurite")) return "cloud";
+  if (n.includes("signalr")) return "broadcast";
+  if (n.includes("dashboard")) return "gauge";
+  return "bolt";
+}
+
+// Which of the 3 sections each compose service belongs to. Docker has no notion of this
+// grouping (unlike depends_on), so it's a hand-maintained map — update it when a new
+// service is added to docker-compose-live.yml.
+const CATEGORIES = [
+  {
+    key: "infra",
+    title: "Infrastructure",
+    icon: "stack",
+    color: "#3b82f6",
+    services: ["redis-live", "kafka-live", "zookeeper-live", "kafdrop-live", "azurite-live", "dashboard-live"],
+  },
+  {
+    key: "helpers",
+    title: "Helpers",
+    icon: "wrench",
+    color: "#f59e0b",
+    services: ["holiday-live", "ohlc-live", "signalr-live"],
+  },
+  {
+    key: "core",
+    title: "Core Services",
+    icon: "chip",
+    color: "#8b5cf6",
+    services: ["dataingestion", "country-live", "exchange-live", "aggregation-live", "notification-live"],
+  },
+];
+
+function categoryFor(composeService) {
+  return CATEGORIES.find(c => c.services.includes(composeService)) || CATEGORIES[CATEGORIES.length - 1];
+}
+
+function svgIcon(name, extraClass) {
+  const path = ICONS[name] || ICONS.bolt;
+  return `<svg class="icon ${extraClass || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+}
+
+document.querySelectorAll(".section-icon, .placeholder-icon").forEach(el => {
+  el.innerHTML = svgIcon(el.dataset.icon);
+});
+
+// --- left nav / page switching (URL hash-based, so pages are linkable and back/forward work) ---
+const PAGES = document.querySelectorAll(".page");
+const NAV_ITEMS = document.querySelectorAll(".nav-item");
+const DEFAULT_PAGE = "services";
+
+function showPage(key) {
+  const target = Array.from(PAGES).some(p => p.dataset.page === key) ? key : DEFAULT_PAGE;
+  PAGES.forEach(p => p.classList.toggle("active", p.dataset.page === target));
+  NAV_ITEMS.forEach(n => n.classList.toggle("active", n.dataset.page === target));
+
+  // the connection-arrow math needs real (non-zero) layout size, which a hidden `.page`
+  // doesn't have — redraw once it's actually visible instead of relying on a stale measurement
+  if (target === "services") {
+    requestAnimationFrame(() => drawConnections(lastServices));
+  }
+
+  // refresh on every visit rather than once at page load, so edits/deploys from a previous
+  // visit (or from another browser tab) aren't shown stale; also drop any open view/edit panel
+  if (target === "strategy") {
+    closeStrategyPanel();
+    loadStrategyGrid();
+  }
+}
+
+NAV_ITEMS.forEach(btn => {
+  btn.querySelector(".nav-icon").innerHTML = svgIcon(btn.dataset.icon);
+  btn.addEventListener("click", () => { location.hash = btn.dataset.page; });
+});
+
+window.addEventListener("hashchange", () => showPage(location.hash.replace("#", "")));
+showPage(location.hash.replace("#", "") || DEFAULT_PAGE);
+
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme")
+    || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+}
+
+function renderThemeToggle() {
+  const btn = document.getElementById("theme-toggle");
+  // icon shown = the theme you'd switch TO
+  btn.innerHTML = svgIcon(currentTheme() === "dark" ? "sun" : "moon");
+}
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("theme", next);
+  renderThemeToggle();
+  requestAnimationFrame(() => drawConnections(lastServices)); // line color depends on theme
+});
+
+renderThemeToggle();
+
+function currentOrientation() {
+  return localStorage.getItem("orientation") || "horizontal";
+}
+
+function renderOrientationToggle() {
+  const btn = document.getElementById("orientation-toggle");
+  const orientation = currentOrientation();
+  document.getElementById("services").setAttribute("data-orientation", orientation);
+  // icon shown = the layout you'd switch TO
+  btn.innerHTML = svgIcon(orientation === "horizontal" ? "rows" : "columns");
+}
+
+document.getElementById("orientation-toggle").addEventListener("click", () => {
+  const next = currentOrientation() === "horizontal" ? "vertical" : "horizontal";
+  localStorage.setItem("orientation", next);
+  renderOrientationToggle();
+  requestAnimationFrame(() => drawConnections(lastServices)); // panel positions changed
+});
+
+renderOrientationToggle();
+
+function formatAge(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  if (seconds < 0) seconds = 0;
+  if (seconds < 60) return `${Math.round(seconds)}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function stateClass(state) {
+  if (state === "running") return "running";
+  if (state === "exited" || state === "dead") return "exited";
+  return "other";
+}
+
+let lastServices = [];
+
+function serviceCard(s) {
+  return `
+    <div class="card" id="card-${cssId(s.composeService)}" data-service="${s.composeService}">
+      <div class="name">${svgIcon(iconFor(s.composeService))}<span>${s.composeService || s.name}</span></div>
+      <div class="status-line">
+        <span class="dot ${stateClass(s.state)}"></span>
+        <span>${s.status}</span>
+      </div>
+      ${s.ports.length ? `<div class="status-line">${s.ports.join(", ")}</div>` : ""}
+    </div>
+  `;
+}
+
+async function loadServices() {
+  const el = document.getElementById("services");
+  try {
+    const res = await fetch("/api/services");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const services = await res.json();
+    lastServices = services;
+
+    if (!services.length) {
+      el.innerHTML = `<div class="error">No containers found for this compose project.</div>`;
+      drawConnections([]);
+      return;
+    }
+
+    el.innerHTML = CATEGORIES.map(cat => {
+      const items = services.filter(s => categoryFor(s.composeService).key === cat.key);
+      return `
+        <div class="category-panel" style="--cat-color:${cat.color}">
+          <div class="category-header">
+            ${svgIcon(cat.icon, "category-icon")}
+            <span>${cat.title}</span>
+            <span class="category-count">${items.length}</span>
+          </div>
+          <div class="cards-mini">
+            ${items.length ? items.map(serviceCard).join("") : `<div class="empty">No services</div>`}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // let the DOM settle before measuring positions
+    requestAnimationFrame(() => drawConnections(services));
+  } catch (err) {
+    el.innerHTML = `<div class="error">Unable to load service status: ${err.message}</div>`;
+    drawConnections([]);
+  }
+}
+
+function cssId(name) {
+  return (name || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function drawConnections(services) {
+  const wrapper = document.getElementById("services-graph");
+  const svg = document.getElementById("connections");
+  svg.innerHTML = "";
+
+  if (!services.length) return;
+
+  const wrapperRect = wrapper.getBoundingClientRect();
+  svg.setAttribute("width", wrapperRect.width);
+  svg.setAttribute("height", wrapperRect.height);
+
+  svg.innerHTML = `
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" fill="currentColor"></path>
+      </marker>
+    </defs>
+  `;
+
+  const centerOf = (composeService) => {
+    const card = document.getElementById(`card-${cssId(composeService)}`);
+    if (!card) return null;
+    const r = card.getBoundingClientRect();
+    return {
+      x: r.left - wrapperRect.left + r.width / 2,
+      y: r.top - wrapperRect.top + r.height / 2,
+      halfW: r.width / 2,
+      halfH: r.height / 2,
+    };
+  };
+
+  services.forEach(s => {
+    (s.dependsOn || []).forEach(depName => {
+      const from = centerOf(s.composeService);
+      const to = centerOf(depName);
+      if (!from || !to) return;
+
+      // trim the line so it stops at the card edge instead of overlapping the card
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const ux = dx / dist, uy = dy / dist;
+      const x1 = from.x + ux * (from.halfW * 0.9);
+      const y1 = from.y + uy * (from.halfH * 0.9);
+      const x2 = to.x - ux * (to.halfW * 1.1);
+      const y2 = to.y - uy * (to.halfH * 1.1);
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", x1);
+      line.setAttribute("y1", y1);
+      line.setAttribute("x2", x2);
+      line.setAttribute("y2", y2);
+      line.setAttribute("class", "connection");
+      line.setAttribute("marker-end", "url(#arrow)");
+      svg.appendChild(line);
+    });
+  });
+}
+
+async function loadFreshness() {
+  const tbody = document.querySelector("#freshness tbody");
+  try {
+    const res = await fetch("/api/freshness");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const items = await res.json();
+
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="7">No cached data yet — nothing has flowed through the pipeline.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = items.map(i => `
+      <tr>
+        <td>${i.category}</td>
+        <td>${i.ticker ?? "—"}</td>
+        <td>${i.dataType ?? "—"}</td>
+        <td>${i.timeframe ?? "—"}</td>
+        <td>${i.updatedOn ? new Date(i.updatedOn).toLocaleString() : "—"}</td>
+        <td>${formatAge(i.ageSeconds)}</td>
+        <td><span class="pill ${i.isStale ? "stale" : "fresh"}">${i.isStale ? "Stale" : "Fresh"}</span></td>
+      </tr>
+    `).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" class="error">Unable to load freshness data: ${err.message}</td></tr>`;
+  }
+}
+
+async function refresh() {
+  await Promise.all([loadServices(), loadFreshness()]);
+  document.getElementById("last-refresh").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+}
+
+window.addEventListener("resize", () => drawConnections(lastServices));
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+
+// --- Strategy page (talks to strategy-live's published port directly from the browser) ---
+// Uses the current page's hostname rather than a hardcoded "localhost" so this also works
+// when the dashboard is opened from another device on the LAN (e.g. a phone) via its IP.
+const STRATEGY_API_BASE = `${location.protocol}//${location.hostname}:8096`;
+
+// Fixed choices per the current spec. Exchange/Risk are hardcoded outright (shown disabled);
+// the rest are closed lists for now — expand these arrays as the product grows.
+const HARDCODED_EXCHANGE = "NSE";
+const HARDCODED_RISK = "Moderate";
+const GOALS_OPTIONS = ["Second Income", "Education Goal", "Retirement Goal", "Accumulation Goal"];
+const BROKER_OPTIONS = ["Zerodha", "Upstox"];
+const INSTRUMENT_OPTIONS = ["Bank Nifty Futures", "Bank Nifty Options", "Nifty 50 Futures", "Nifty 50 Options"];
+const TRADETYPE_OPTIONS = ["Intraday", "CarryOver"];
+const MONEYNESS_OPTIONS = ["ITM", "ATM", "OTM"];
+
+// Which rule-level Properties.Instrument values are offered depends on which underlying is picked
+// at the top: choosing a Nifty 50 instrument restricts every nested rule's Instrument field to
+// Nifty-only values, and vice versa for Bank Nifty — so a strategy can't accidentally mix underlyings
+// down in its rules.
+const NIFTY_RULE_INSTRUMENTS = ["Nifty_Index_Spot", "Nifty_Future", "Nifty_Option"];
+const BANKNIFTY_RULE_INSTRUMENTS = ["BankNifty_Index_Spot", "BankNifty_Future", "BankNifty_Option"];
+
+function checkedInstruments() {
+  const el = document.getElementById("f-instruments");
+  return el ? Array.from(el.querySelectorAll("input:checked")).map(i => i.value) : [];
+}
+
+function allowedRuleInstruments() {
+  const chosen = checkedInstruments();
+  const hasNifty = chosen.some(i => i.includes("Nifty 50"));
+  const hasBankNifty = chosen.some(i => i.includes("Bank Nifty"));
+  if (hasNifty && !hasBankNifty) return NIFTY_RULE_INSTRUMENTS;
+  if (hasBankNifty && !hasNifty) return BANKNIFTY_RULE_INSTRUMENTS;
+  // nothing chosen yet, or both underlyings chosen at once — don't block editing, offer everything
+  return [...NIFTY_RULE_INSTRUMENTS, ...BANKNIFTY_RULE_INSTRUMENTS];
+}
+
+function hasOptionsInstrumentChecked() {
+  return checkedInstruments().some(i => i.includes("Options"));
+}
+
+function hasInstrumentOptions(instruments) {
+  return !!(instruments && instruments.some(i => i.includes("Options")));
+}
+
+let strategyList = [];
+
+// Working set of TradingSessionRules while the form is open (camelCase, matching what the API's
+// GET returns — converted to PascalCase only at save time, in ruleToPascalCase). Structural edits
+// (add/remove a rule) re-render this section from the array; field-level edits are read straight
+// from the DOM at sync time rather than kept in sync on every keystroke, so typing never loses focus.
+// Working state for every rule-array editor on the currently-open form, keyed by section id
+// (e.g. "tradingSessionRules", "longEntryRules", "longEntryRisk", ...). Same TradingRule[] shape
+// backs TradingSessionRules and all four EntryExitRule arrays, so one component serves all of them.
+let ruleSections = {};
+
+const OPERAND_TYPES = ["Indicator", "Literal", "Expression"];
+const OPERATORS = ["==", "!=", "<", "<=", ">", ">="];
+const LINK_OPTIONS = ["", "AND", "OR"];
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function emptyOperand(type) {
+  return { type: type || "Literal", value: "", properties: null };
+}
+
+function emptyRule() {
+  return { sequence: 1, leftOperand: emptyOperand("Indicator"), operator: "==", rightOperand: emptyOperand("Literal"), link: "" };
+}
+
+function instrumentOptionsHtml(currentValue) {
+  const allowed = allowedRuleInstruments();
+  // an out-of-set value (e.g. left over from before the top-level Instruments selection changed)
+  // is kept as an extra option rather than silently dropped — no data loss, just visible as odd-one-out
+  const options = !currentValue || allowed.includes(currentValue) ? allowed : [...allowed, currentValue];
+  return `<option value="">(select)</option>` +
+    options.map(v => `<option value="${esc(v)}" ${v === currentValue ? "selected" : ""}>${esc(v)}</option>`).join("");
+}
+
+function operandCardHtml(side, operand) {
+  const o = operand || emptyOperand();
+  const p = o.properties || {};
+  const hideProps = o.type === "Literal";
+  return `
+    <div class="operand-card" data-side="${side}">
+      <div class="operand-label">${side === "left" ? "Left Operand" : "Right Operand"}</div>
+      <div class="operand-type-row">
+        <select class="operand-type-select">
+          ${OPERAND_TYPES.map(t => `<option value="${t}" ${o.type === t ? "selected" : ""}>${t}</option>`).join("")}
+        </select>
+        <input type="text" class="operand-value-input" value="${esc(o.value)}" placeholder="e.g. Supertrend / Allocated Capital">
+      </div>
+      <div class="operand-props-grid" ${hideProps ? "hidden" : ""}>
+        <input type="number" class="prop-period" placeholder="Period" value="${p.period ?? ""}">
+        <input type="number" class="prop-multiplier" placeholder="Multiplier" value="${p.multiplier ?? ""}">
+        <input type="text" class="prop-timeframe" placeholder="Timeframe e.g. 5 Minutes" value="${esc(p.timeframe ?? "")}">
+        <select class="prop-instrument" title="Constrained to the underlying(s) chosen in Instruments above">${instrumentOptionsHtml(p.instrument ?? "")}</select>
+        <select class="prop-relpos">
+          <option value="" ${!p.relativePosition ? "selected" : ""}>Current</option>
+          <option value="Previous" ${p.relativePosition === "Previous" ? "selected" : ""}>Previous</option>
+        </select>
+      </div>
+    </div>
+  `;
+}
+
+function ruleRowHtml(rule, index, key) {
+  return `
+    <div class="rule-row" data-key="${key}" data-index="${index}">
+      <div class="rule-row-head">
+        <span class="rule-row-title">Rule ${index + 1}</span>
+        <button type="button" class="btn btn-danger rule-remove-btn" data-key="${key}" data-index="${index}">Remove</button>
+      </div>
+      <div class="rule-row-grid">
+        ${operandCardHtml("left", rule.leftOperand)}
+        <div class="operand-card operator-card">
+          <div class="operand-label">Operator</div>
+          <select class="rule-operator-select">
+            ${OPERATORS.map(op => `<option value="${op}" ${rule.operator === op ? "selected" : ""}>${esc(op)}</option>`).join("")}
+          </select>
+        </div>
+        ${operandCardHtml("right", rule.rightOperand)}
+      </div>
+      <div class="rule-link-row">
+        <label>Link to next rule:</label>
+        <select class="rule-link-select">
+          ${LINK_OPTIONS.map(l => `<option value="${l}" ${rule.link === l ? "selected" : ""}>${l || "(none — last rule)"}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+  `;
+}
+
+// One <div class="rules-section"> block: a header with an "+ Add Rule" button and a list container.
+// `key` must match what ruleSections[] is keyed by and what the Add/Remove buttons carry in data-key.
+function ruleSectionBlockHtml(key, title) {
+  return `
+    <div class="rules-section">
+      <div class="rules-section-head">
+        <div class="view-label">${esc(title)}</div>
+        <button type="button" class="btn rule-add-btn" data-key="${key}">+ Add Rule</button>
+      </div>
+      <div class="rule-list" data-key="${key}"></div>
+    </div>
+  `;
+}
+
+function renderRuleSection(key) {
+  const container = document.querySelector(`.rule-list[data-key="${key}"]`);
+  if (!container) return;
+  const rules = ruleSections[key] || [];
+  container.innerHTML = rules.length
+    ? rules.map((r, i) => ruleRowHtml(r, i, key)).join("")
+    : `<div class="hint">No rules yet — click "Add Rule".</div>`;
+}
+
+function readOperandFromCard(card) {
+  const type = card.querySelector(".operand-type-select").value;
+  const value = card.querySelector(".operand-value-input").value.trim();
+
+  if (type === "Literal") {
+    return { type, value, properties: null };
+  }
+
+  const period = card.querySelector(".prop-period").value;
+  const multiplier = card.querySelector(".prop-multiplier").value;
+  const timeframe = card.querySelector(".prop-timeframe").value.trim();
+  const instrument = card.querySelector(".prop-instrument").value.trim();
+  const relativePosition = card.querySelector(".prop-relpos").value;
+  const hasProps = period || multiplier || timeframe || instrument || relativePosition;
+
+  return {
+    type,
+    value,
+    properties: hasProps
+      ? {
+          period: period ? Number(period) : 0,
+          multiplier: multiplier ? Number(multiplier) : 0,
+          timeframe: timeframe || null,
+          instrument: instrument || null,
+          relativePosition: relativePosition || null,
+        }
+      : null,
+  };
+}
+
+function syncRuleSectionFromDom(key) {
+  const rows = document.querySelectorAll(`.rule-row[data-key="${key}"]`);
+  ruleSections[key] = Array.from(rows).map((row, i) => ({
+    sequence: i + 1,
+    leftOperand: readOperandFromCard(row.querySelector('.operand-card[data-side="left"]')),
+    operator: row.querySelector(".rule-operator-select").value,
+    rightOperand: readOperandFromCard(row.querySelector('.operand-card[data-side="right"]')),
+    link: row.querySelector(".rule-link-select").value,
+  }));
+}
+
+function syncAllRuleSectionsFromDom() {
+  Object.keys(ruleSections).forEach(syncRuleSectionFromDom);
+}
+
+function operandToPascalCase(o) {
+  return {
+    Type: o.type,
+    Value: o.value,
+    Properties: o.properties
+      ? {
+          Period: o.properties.period,
+          Multiplier: o.properties.multiplier,
+          Timeframe: o.properties.timeframe,
+          Instrument: o.properties.instrument,
+          RelativePosition: o.properties.relativePosition,
+        }
+      : null,
+  };
+}
+
+function ruleToPascalCase(r) {
+  return {
+    Sequence: r.sequence,
+    LeftOperand: operandToPascalCase(r.leftOperand),
+    Operator: r.operator,
+    RightOperand: operandToPascalCase(r.rightOperand),
+    Link: r.link,
+  };
+}
+
+function describeOperand(o) {
+  if (!o) return "—";
+  let s = o.value || "(empty)";
+  if (o.type !== "Literal" && o.properties) {
+    const bits = [];
+    if (o.properties.period) bits.push(`P${o.properties.period}`);
+    if (o.properties.multiplier) bits.push(`x${o.properties.multiplier}`);
+    if (o.properties.timeframe) bits.push(o.properties.timeframe);
+    if (o.properties.instrument) bits.push(o.properties.instrument);
+    if (o.properties.relativePosition) bits.push(o.properties.relativePosition);
+    if (bits.length) s += ` (${bits.join(", ")})`;
+  }
+  return esc(s);
+}
+
+function describeRule(r) {
+  return `${describeOperand(r.leftOperand)} <b>${esc(r.operator)}</b> ${describeOperand(r.rightOperand)}` +
+    (r.link ? ` <span class="rule-link-tag">${esc(r.link)}</span>` : "");
+}
+
+function ruleListReadonlyHtml(title, rules) {
+  return `
+    <div class="rules-section">
+      <div class="view-label">${esc(title)}</div>
+      ${rules && rules.length
+        ? rules.map(r => `<div class="rule-readonly">${describeRule(r)}</div>`).join("")
+        : `<div class="hint">No rules defined.</div>`}
+    </div>
+  `;
+}
+
+function strategyError(message) {
+  const el = document.getElementById("strategy-error");
+  if (!message) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+}
+
+function closeStrategyPanel() {
+  const panel = document.getElementById("strategy-panel");
+  panel.hidden = true;
+  panel.innerHTML = "";
+}
+
+async function loadStrategyGrid() {
+  const el = document.getElementById("strategy-grid");
+  try {
+    const res = await fetch(`${STRATEGY_API_BASE}/api/strategies`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    strategyList = await res.json();
+    strategyError(null);
+
+    if (!strategyList.length) {
+      el.innerHTML = `<div class="hint">No strategies yet — click "+ New Strategy" to create one, or drop a .json file into config/strategies/.</div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div class="table-scroll">
+        <table class="strategy-table">
+          <thead>
+            <tr>
+              <th>Exchange</th><th>Strategy Name</th><th>Version</th><th>Deployed Version</th><th>Broker</th>
+              <th>Goals</th><th>Risk</th><th>Trade Type</th><th>Instruments</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${strategyList.map(strategyRowHtml).join("")}</tbody>
+        </table>
+      </div>
+    `;
+    el.querySelectorAll("[data-action]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const { action, id } = btn.dataset;
+        if (action === "view") openStrategyView(id);
+        else if (action === "edit") openStrategyEdit(id);
+        else if (action === "deploy") deployStrategy(id);
+        else if (action === "delete") deleteStrategyById(id);
+      });
+    });
+  } catch (err) {
+    el.innerHTML = "";
+    strategyError(`Unable to reach strategy-live at ${STRATEGY_API_BASE} — is that service running? (${err.message})`);
+  }
+}
+
+function strategyRowHtml(s) {
+  const isDeployed = s.deployedVersion && s.deployedVersion === s.version;
+  const deployedCell = s.deployedVersion
+    ? `v${esc(s.deployedVersion)} ${isDeployed ? `<span class="badge badge-deployed">Current</span>` : `<span class="badge badge-not-deployed">Behind</span>`}`
+    : `<span class="badge">Not deployed</span>`;
+
+  return `
+    <tr>
+      <td>${esc(s.exchange || "—")}</td>
+      <td class="strategy-name-cell">${esc(s.strategyName || s.id)}</td>
+      <td>v${esc(s.version)}</td>
+      <td>${deployedCell}</td>
+      <td>${esc(s.broker || "—")}</td>
+      <td>${s.goals && s.goals.length ? esc(s.goals.join(", ")) : "—"}</td>
+      <td>${esc(s.risk || "—")}</td>
+      <td>${esc(s.tradeType || "—")}</td>
+      <td>${s.instruments && s.instruments.length ? esc(s.instruments.join(", ")) : "—"}</td>
+      <td class="strategy-actions-cell">
+        <button class="btn" data-action="view" data-id="${esc(s.id)}">View</button>
+        <button class="btn" data-action="edit" data-id="${esc(s.id)}">Edit</button>
+        <button class="btn btn-primary" data-action="deploy" data-id="${esc(s.id)}">Deploy</button>
+        <button class="btn btn-danger" data-action="delete" data-id="${esc(s.id)}">Delete</button>
+      </td>
+    </tr>
+  `;
+}
+
+async function fetchStrategy(id) {
+  const res = await fetch(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function openStrategyView(id) {
+  try {
+    renderStrategyViewPanel(id, await fetchStrategy(id));
+  } catch (err) {
+    strategyError(`Unable to load strategy '${id}': ${err.message}`);
+  }
+}
+
+function renderStrategyViewPanel(id, s) {
+  const sub = (s.strategies && s.strategies[0]) || {};
+  const panel = document.getElementById("strategy-panel");
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="strategy-panel-head">
+      <h3>${esc(s.strategyName || id)}</h3>
+      <div class="strategy-panel-actions">
+        <button class="btn" id="panel-edit-btn">Edit</button>
+        <button class="btn" id="panel-close-btn">Close</button>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="view-field"><div class="view-label">Exchange</div><div class="view-value">${esc(s.exchange)}</div></div>
+      <div class="view-field"><div class="view-label">Version</div><div class="view-value">v${esc(s.version)}${s.deployedVersion ? ` (deployed: v${esc(s.deployedVersion)})` : " (not deployed)"}</div></div>
+      <div class="view-field"><div class="view-label">Broker</div><div class="view-value">${esc(s.broker || "—")}</div></div>
+      <div class="view-field"><div class="view-label">Risk</div><div class="view-value">${esc(sub.risk || "—")}</div></div>
+      <div class="view-field"><div class="view-label">Trade Type</div><div class="view-value">${esc(sub.tradeType || "—")}</div></div>
+      ${sub.moneyness ? `<div class="view-field"><div class="view-label">Moneyness</div><div class="view-value">${esc(sub.moneyness)}</div></div>` : ""}
+      <div class="view-field span-2"><div class="view-label">Goals</div><div class="chip-row">${(s.goals || []).map(g => `<span class="chip">${esc(g)}</span>`).join("") || "—"}</div></div>
+      <div class="view-field span-2"><div class="view-label">Instruments</div><div class="chip-row">${(sub.instruments || []).map(i => `<span class="chip">${esc(i)}</span>`).join("") || "—"}</div></div>
+    </div>
+    ${ruleListReadonlyHtml("Trading Session Rules", sub.tradingSessionRules)}
+    <div class="rules-group-label">Long Entry</div>
+    ${LONG_ENTRY_SECTIONS.map(([, title, sourceField]) => ruleListReadonlyHtml(title, (sub.longEntry || {})[sourceField])).join("")}
+    <div class="rules-group-label">Short Entry</div>
+    ${SHORT_ENTRY_SECTIONS.map(([, title, sourceField]) => ruleListReadonlyHtml(title, (sub.shortEntry || {})[sourceField])).join("")}
+  `;
+  document.getElementById("panel-edit-btn").addEventListener("click", () => openStrategyEdit(id));
+  document.getElementById("panel-close-btn").addEventListener("click", closeStrategyPanel);
+}
+
+async function openStrategyEdit(id) {
+  try {
+    renderStrategyForm(id, await fetchStrategy(id));
+  } catch (err) {
+    strategyError(`Unable to load strategy '${id}': ${err.message}`);
+  }
+}
+
+function openStrategyNew() {
+  renderStrategyForm(null, null);
+}
+
+// Section keys used throughout: which EntryExitRule sub-array each maps to, on which side.
+const LONG_ENTRY_SECTIONS = [
+  ["longEntryRules", "Long Entry: Entry Rules", "entryRules"],
+  ["longEntryRisk", "Long Entry: Risk Management Rules", "riskManagementRules"],
+  ["longEntryStopLoss", "Long Entry: Update Stop-Loss Rules", "updateStopLossRules"],
+  ["longEntryExit", "Long Entry: Exit Rules", "exitRules"],
+];
+const SHORT_ENTRY_SECTIONS = [
+  ["shortEntryRules", "Short Entry: Entry Rules", "entryRules"],
+  ["shortEntryRisk", "Short Entry: Risk Management Rules", "riskManagementRules"],
+  ["shortEntryStopLoss", "Short Entry: Update Stop-Loss Rules", "updateStopLossRules"],
+  ["shortEntryExit", "Short Entry: Exit Rules", "exitRules"],
+];
+
+function renderStrategyForm(id, existing) {
+  const isNew = !existing;
+  const sub = (existing && existing.strategies && existing.strategies[0]) || {};
+  const longEntry = (!isNew && sub.longEntry) || {};
+  const shortEntry = (!isNew && sub.shortEntry) || {};
+
+  // deep-cloned (not a live reference into `sub`) so Cancel doesn't leave mutated state behind
+  const clone = v => JSON.parse(JSON.stringify(v || []));
+  ruleSections = { tradingSessionRules: isNew ? [] : clone(sub.tradingSessionRules) };
+  LONG_ENTRY_SECTIONS.forEach(([key, , sourceField]) => {
+    ruleSections[key] = isNew ? [] : clone(longEntry[sourceField]);
+  });
+  SHORT_ENTRY_SECTIONS.forEach(([key, , sourceField]) => {
+    ruleSections[key] = isNew ? [] : clone(shortEntry[sourceField]);
+  });
+
+  const panel = document.getElementById("strategy-panel");
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="strategy-panel-head">
+      <h3>${isNew ? "New Strategy" : `Edit: ${esc(existing.strategyName || id)}`}</h3>
+      <div class="strategy-panel-actions">
+        <button class="btn btn-primary" id="form-save-btn">Save</button>
+        <button class="btn" id="form-cancel-btn">Cancel</button>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label>Exchange</label>
+        <input type="text" value="${esc(HARDCODED_EXCHANGE)}" disabled>
+      </div>
+      <div class="form-field">
+        <label>Strategy Name</label>
+        <input type="text" id="f-name" value="${esc(isNew ? "" : existing.strategyName)}" placeholder="e.g. Second Income">
+      </div>
+      <div class="form-field">
+        <label>Version</label>
+        <input type="text" value="${isNew ? "will be 1.0.0" : `v${esc(existing.version)} (auto-bumps on save)`}" disabled>
+      </div>
+      <div class="form-field">
+        <label>Broker</label>
+        <select id="f-broker">
+          ${BROKER_OPTIONS.map(b => `<option value="${esc(b)}" ${existing && existing.broker === b ? "selected" : ""}>${esc(b)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="form-field span-2">
+        <label>Goals</label>
+        <div class="checkbox-group" id="f-goals">
+          ${GOALS_OPTIONS.map(g => `<label><input type="checkbox" value="${esc(g)}" ${existing && existing.goals && existing.goals.includes(g) ? "checked" : ""}> ${esc(g)}</label>`).join("")}
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Risk</label>
+        <input type="text" value="${esc(HARDCODED_RISK)}" disabled>
+      </div>
+      <div class="form-field">
+        <label>Trade Type</label>
+        <select id="f-tradetype">
+          ${TRADETYPE_OPTIONS.map(t => `<option value="${esc(t)}" ${sub.tradeType === t ? "selected" : ""}>${esc(t)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="form-field span-2">
+        <label>Instruments</label>
+        <div class="checkbox-group" id="f-instruments">
+          ${INSTRUMENT_OPTIONS.map(i => `<label><input type="checkbox" value="${esc(i)}" ${sub.instruments && sub.instruments.includes(i) ? "checked" : ""}> ${esc(i)}</label>`).join("")}
+        </div>
+      </div>
+      <div class="form-field" id="f-moneyness-field" ${hasInstrumentOptions(sub.instruments) ? "" : "hidden"}>
+        <label>Moneyness</label>
+        <select id="f-moneyness">
+          ${MONEYNESS_OPTIONS.map(m => `<option value="${esc(m)}" ${sub.moneyness === m ? "selected" : ""}>${esc(m)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+
+    ${ruleSectionBlockHtml("tradingSessionRules", "Trading Session Rules")}
+
+    <div class="rules-group-label">Long Entry</div>
+    ${LONG_ENTRY_SECTIONS.map(([key, title]) => ruleSectionBlockHtml(key, title)).join("")}
+
+    <div class="rules-group-label">Short Entry</div>
+    ${SHORT_ENTRY_SECTIONS.map(([key, title]) => ruleSectionBlockHtml(key, title)).join("")}
+
+    <div id="form-status" class="hint"></div>
+  `;
+
+  Object.keys(ruleSections).forEach(renderRuleSection);
+
+  document.getElementById("form-cancel-btn").addEventListener("click", closeStrategyPanel);
+  document.getElementById("form-save-btn").addEventListener("click", () => saveStrategyForm(id));
+}
+
+async function saveStrategyForm(id) {
+  const status = document.getElementById("form-status");
+  status.classList.remove("error");
+
+  const name = document.getElementById("f-name").value.trim();
+  if (!name) {
+    status.classList.add("error");
+    status.textContent = "Strategy name is required.";
+    return;
+  }
+
+  const broker = document.getElementById("f-broker").value;
+  const tradeType = document.getElementById("f-tradetype").value;
+  const goals = Array.from(document.querySelectorAll("#f-goals input:checked")).map(i => i.value);
+  const instruments = Array.from(document.querySelectorAll("#f-instruments input:checked")).map(i => i.value);
+  const moneynessField = document.getElementById("f-moneyness");
+  const moneyness = moneynessField && !document.getElementById("f-moneyness-field").hidden ? moneynessField.value : null;
+
+  syncAllRuleSectionsFromDom();
+
+  const targetId = id || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "strategy";
+
+  // Version/DeployedVersion are deliberately omitted — strategy-live computes/preserves those server-side.
+  const payload = {
+    Exchange: HARDCODED_EXCHANGE,
+    StrategyName: name,
+    Broker: broker,
+    Goals: goals,
+    Strategies: [
+      {
+        Risk: HARDCODED_RISK,
+        Instruments: instruments,
+        Moneyness: moneyness,
+        TradeType: tradeType,
+        TradingSessionRules: ruleSections.tradingSessionRules.map(ruleToPascalCase),
+        LongEntry: {
+          EntryRules: ruleSections.longEntryRules.map(ruleToPascalCase),
+          RiskManagementRules: ruleSections.longEntryRisk.map(ruleToPascalCase),
+          UpdateStopLossRules: ruleSections.longEntryStopLoss.map(ruleToPascalCase),
+          ExitRules: ruleSections.longEntryExit.map(ruleToPascalCase),
+        },
+        ShortEntry: {
+          EntryRules: ruleSections.shortEntryRules.map(ruleToPascalCase),
+          RiskManagementRules: ruleSections.shortEntryRisk.map(ruleToPascalCase),
+          UpdateStopLossRules: ruleSections.shortEntryStopLoss.map(ruleToPascalCase),
+          ExitRules: ruleSections.shortEntryExit.map(ruleToPascalCase),
+        },
+      },
+    ],
+  };
+
+  status.textContent = "Saving…";
+  try {
+    const res = await fetch(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(targetId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    closeStrategyPanel();
+    loadStrategyGrid();
+  } catch (err) {
+    status.classList.add("error");
+    status.textContent = `Save failed: ${err.message}`;
+  }
+}
+
+async function deployStrategy(id) {
+  try {
+    const res = await fetch(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(id)}/deploy`, { method: "POST" });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    loadStrategyGrid();
+  } catch (err) {
+    strategyError(`Deploy failed: ${err.message}`);
+  }
+}
+
+async function deleteStrategyById(id) {
+  if (!confirm(`Delete strategy "${id}"? This can't be undone.`)) return;
+  try {
+    const res = await fetch(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    closeStrategyPanel();
+    loadStrategyGrid();
+  } catch (err) {
+    strategyError(`Delete failed: ${err.message}`);
+  }
+}
+
+document.getElementById("strategy-new").addEventListener("click", openStrategyNew);
+
+// Delegated once on the static #strategy-panel container (present from page load) rather than
+// re-wired inside renderStrategyForm on every render — the rule sections it contains are rebuilt
+// via innerHTML each time the form opens, so per-render listeners would otherwise need re-attaching.
+document.getElementById("strategy-panel").addEventListener("click", e => {
+  const addBtn = e.target.closest(".rule-add-btn");
+  if (addBtn) {
+    const key = addBtn.dataset.key;
+    syncRuleSectionFromDom(key);
+    ruleSections[key].push(emptyRule());
+    renderRuleSection(key);
+    return;
+  }
+
+  const removeBtn = e.target.closest(".rule-remove-btn");
+  if (removeBtn) {
+    const key = removeBtn.dataset.key;
+    syncRuleSectionFromDom(key);
+    ruleSections[key].splice(Number(removeBtn.dataset.index), 1);
+    renderRuleSection(key);
+  }
+});
+
+document.getElementById("strategy-panel").addEventListener("change", e => {
+  if (e.target.classList.contains("operand-type-select")) {
+    const propsGrid = e.target.closest(".operand-card").querySelector(".operand-props-grid");
+    propsGrid.hidden = e.target.value === "Literal";
+    return;
+  }
+
+  if (e.target.closest("#f-instruments")) {
+    const moneynessField = document.getElementById("f-moneyness-field");
+    if (moneynessField) moneynessField.hidden = !hasOptionsInstrumentChecked();
+
+    // the underlying just changed — every rule section's Instrument dropdown offers a different
+    // set of options now, so re-render all of them (after syncing so in-progress edits aren't lost)
+    Object.keys(ruleSections).forEach(key => {
+      syncRuleSectionFromDom(key);
+      renderRuleSection(key);
+    });
+  }
+});
+// initial load, if the strategy grid is already the active page, is handled by showPage() above
+
+loadStrategyList();

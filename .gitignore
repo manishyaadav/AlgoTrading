@@ -1,0 +1,50 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+out/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.idea/
+
+# Test results
+TestResults/
+[Tt]est[Rr]esult*/
+
+# NuGet
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Office temp/lock files
+~$*
+
+# Azure Functions local-only settings (never contains prod secrets in this repo,
+# but local.settings.json is meant to be per-machine, not shared)
+local.settings.json
+
+# Docker Desktop / local scratch
+**/bin/Debug/
+**/bin/Release/

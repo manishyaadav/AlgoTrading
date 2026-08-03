@@ -1,0 +1,40 @@
+@page "/notifications"
+@using Microsoft.AspNetCore.SignalR.Client
+
+@inject HubConnection HubConnection
+
+<h3>Notifications</h3>
+
+<input @bind="user" placeholder="Enter your name" />
+<input @bind="message" placeholder="Enter a message" />
+<button @onclick="SendMessage">Send</button>
+
+<ul>
+    @foreach (var msg in messages)
+    {
+        <li>@msg</li>
+    }
+</ul>
+
+@code {
+    private string user;
+    private string message;
+    private List<string> messages = new List<string>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        HubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+        {
+            var encodedMsg = $"{user}: {message}";
+            messages.Add(encodedMsg);
+            InvokeAsync(StateHasChanged);
+        });
+
+        await HubConnection.StartAsync();
+    }
+
+    private async Task SendMessage()
+    {
+        await HubConnection.InvokeAsync("SendMessage", user, message);
+    }
+}

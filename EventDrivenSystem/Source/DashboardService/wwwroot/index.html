@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlgoTrading — Dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f1115'/%3E%3Cpath d='M5 17l4-6 3 3 5-8' stroke='%233ecf8e' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script>
+  // applied before first paint so there's no flash of the wrong theme
+  (function () {
+    var saved = localStorage.getItem("theme");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
+  })();
+</script>
+</head>
+<body>
+<header>
+  <h1>AlgoTrading Dashboard</h1>
+  <div class="header-right">
+    <a href="http://localhost:9000" target="_blank" rel="noopener">Kafdrop ↗</a>
+    <span id="last-refresh">—</span>
+    <button id="theme-toggle" class="icon-btn" title="Toggle dark/light mode" aria-label="Toggle dark/light mode"></button>
+  </div>
+</header>
+
+<div class="app-body">
+  <nav class="sidebar" id="sidebar">
+    <button class="nav-item" data-page="services" data-icon="graph"><span class="nav-icon"></span><span class="nav-label">Services &amp; Connections</span></button>
+    <button class="nav-item" data-page="freshness" data-icon="freshness"><span class="nav-icon"></span><span class="nav-label">Data Freshness</span></button>
+    <button class="nav-item" data-page="strategy" data-icon="target"><span class="nav-icon"></span><span class="nav-label">Strategy</span></button>
+    <button class="nav-item" data-page="datasync" data-icon="sync"><span class="nav-icon"></span><span class="nav-label">Data Sync</span></button>
+    <button class="nav-item" data-page="backtest" data-icon="history"><span class="nav-icon"></span><span class="nav-label">Backtest</span></button>
+    <button class="nav-item" data-page="broker" data-icon="sliders"><span class="nav-icon"></span><span class="nav-label">Broker Configuration</span></button>
+    <button class="nav-item" data-page="alerts" data-icon="bell"><span class="nav-icon"></span><span class="nav-label">Alerts / Signals</span></button>
+  </nav>
+
+  <main>
+    <div class="page" data-page="services">
+      <section>
+        <div class="section-head">
+          <h2><span class="section-icon" data-icon="graph"></span>Services &amp; Connections</h2>
+          <button id="orientation-toggle" class="icon-btn" title="Switch panel orientation" aria-label="Switch panel orientation"></button>
+        </div>
+        <p class="hint">Arrows show <code>depends_on</code> relationships read live from Docker — not hand-drawn, so this can't drift out of sync with the compose file.</p>
+        <div id="services-graph" class="graph-wrapper">
+          <svg id="connections"></svg>
+          <div id="services" class="category-row">Loading…</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="page" data-page="freshness">
+      <section>
+        <h2><span class="section-icon" data-icon="freshness"></span>Data Freshness</h2>
+        <p class="hint">Derived from Redis cache keys written by <code>notification-live</code>. Outside market hours, everything will show as stale — that's expected, not a fault.</p>
+        <table id="freshness">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Ticker</th>
+              <th>Data Type</th>
+              <th>Timeframe</th>
+              <th>Last Updated</th>
+              <th>Age</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </section>
+    </div>
+
+    <div class="page" data-page="strategy">
+      <section>
+        <div class="section-head">
+          <h2><span class="section-icon" data-icon="target"></span>Strategy</h2>
+          <button id="strategy-new" class="btn btn-primary">+ New Strategy</button>
+        </div>
+        <p class="hint">Backed by <code>strategy-live</code>, reading/writing JSON files under <code>StrategyService/config/strategies/</code>. Drop a new <code>.json</code> file in that folder directly and it shows up here too.</p>
+        <div id="strategy-error" class="error" hidden></div>
+
+        <div id="strategy-grid" class="strategy-grid">Loading…</div>
+
+        <div id="strategy-panel" class="strategy-panel" hidden></div>
+      </section>
+    </div>
+
+    <div class="page" data-page="datasync">
+      <section>
+        <h2><span class="section-icon" data-icon="sync"></span>Data Sync</h2>
+        <div class="placeholder">
+          <span class="placeholder-icon" data-icon="sync"></span>
+          <p>Status of historical data backfills and sync jobs against exchange/API sources.</p>
+          <p class="hint">Not wired up yet — placeholder page.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="page" data-page="backtest">
+      <section>
+        <h2><span class="section-icon" data-icon="history"></span>Backtest</h2>
+        <div class="placeholder">
+          <span class="placeholder-icon" data-icon="history"></span>
+          <p>Run and review strategy backtests against historical OHLC data.</p>
+          <p class="hint">Not wired up yet — placeholder page.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="page" data-page="broker">
+      <section>
+        <h2><span class="section-icon" data-icon="sliders"></span>Broker Configuration</h2>
+        <div class="placeholder">
+          <span class="placeholder-icon" data-icon="sliders"></span>
+          <p>Manage broker/API credentials and connection settings used for order execution.</p>
+          <p class="hint">Not wired up yet — placeholder page.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="page" data-page="alerts">
+      <section>
+        <h2><span class="section-icon" data-icon="bell"></span>Alerts / Signals</h2>
+        <div class="placeholder">
+          <span class="placeholder-icon" data-icon="bell"></span>
+          <p>Live feed of trading alerts and signals generated by strategies.</p>
+          <p class="hint">Not wired up yet — placeholder page.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

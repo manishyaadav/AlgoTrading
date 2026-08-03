@@ -1,0 +1,425 @@
+services:
+  # postgres:
+  #   image: postgres:latest
+  #   container_name: postgres
+  #   environment:
+  #     POSTGRES_PASSWORD: newpassword
+  #     TZ: "Asia/Kolkata"
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - D:/ApplicationData/PostgreSQL-Data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+  #   networks:
+  #     - live-network
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  redis-live:    
+    image: redis/redis-stack-server:6.2.6-v18
+    container_name: redis-live
+    environment:
+      TZ: "Asia/Kolkata"
+    ports:
+      - "6382:6379"
+    volumes:
+      - redis_data_live:/data
+    restart: unless-stopped
+    networks:
+      - live-network
+    deploy:
+      resources:
+        limits:
+          memory: "256M"  # Adjust as needed
+
+  dashboard-live:
+    image: dashboard-service-live-image:v1
+    container_name: dashboard-live
+    ports:
+      - "8099:8080"
+    environment:
+      "TZ": "Asia/Kolkata"
+      "RedisConnectionString": "redis-live:6379"
+      "DOCKER_HOST_URI": "unix:///var/run/docker.sock"
+      "COMPOSE_PROJECT_NAME": "live"
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis-live
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  # rabbitmq:
+  #   image: rabbitmq:3-management
+  #   container_name: rabbitmq
+  #   environment:      
+  #     TZ: "Asia/Kolkata"
+  #   ports:
+  #     - "5672:5672"
+  #     - "15672:15672"
+  #   restart: unless-stopped
+  #   volumes:
+  #     - D:/ApplicationData/RabbitMQ-Data:/var/lib/rabbitmq
+  #   networks:
+  #     - live-network
+
+  azurite-live:
+    image: mcr.microsoft.com/azure-storage/azurite
+    container_name: azurite-live
+    environment:
+      TZ: "Asia/Kolkata"
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+    volumes:
+      - azurite-live-data:/data
+    restart: unless-stopped
+    networks:
+      - live-network
+  
+  zookeeper-live:
+    image: confluentinc/cp-zookeeper:7.8.0
+    container_name: zookeeper-live
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2182
+      ZOOKEEPER_TICK_TIME: 2000
+      TZ: "Asia/Kolkata"
+    volumes:
+      - zookeeper-data-live:/var/lib/zookeeper/data
+      - zookeeper-log-live:/var/lib/zookeeper/log
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  kafka-live:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-live
+    depends_on:
+      - zookeeper-live      
+    ports:
+      - "9092:9092"      
+    environment:
+      KAFKA_BROKER_ID: 25
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-live:2182
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-live:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      TZ: "Asia/Kolkata"
+    volumes:
+      - kafka-data-live:/var/lib/kafka/data       
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  kafdrop-live:
+    image: obsidiandynamics/kafdrop
+    container_name: kafdrop-live
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka-live:29092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+    networks:
+      - live-network
+    depends_on:
+      - kafka-live
+    restart: unless-stopped  
+
+  dataingestion:
+    image: dataingestion-service-image:v6
+    container_name: dataingestion-service
+    ports:
+      - "8080:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"
+      "KAFKA_BROKER_URL": "kafka-live:29092"
+    depends_on:
+      - kafka-live
+      - azurite-live
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  holiday-live:
+    image: holiday-service-live-image:v2
+    container_name: holiday-service-live-container
+    ports:
+      - "8091:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"            
+    depends_on:
+      - azurite-live
+    #  - rabbitmq
+    restart: unless-stopped
+    networks:
+      - live-network
+  ohlc-live:
+    image: ohlc-service-live-image:v1
+    container_name: ohlc-service-live-container
+    ports:
+      - "8092:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"            
+    depends_on:
+      - azurite-live
+    restart: unless-stopped
+    networks:
+      - live-network
+  country-live:
+    image: country-service-live-image:v2
+    container_name: country-service-live-container
+    ports:
+      - "8093:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"    
+      "KAFKA_BROKER_URL": "kafka-live:29092"   
+      "HOLIDAY_API": "http://holiday-live"  
+      "ProducerTopicName": "live-country-workflow-topic"
+      "EnvironmentName":  "live"     
+    depends_on:
+      - holiday-live
+      - kafka-live
+      - azurite-live     
+    restart: unless-stopped
+    networks:
+      - live-network
+  exchange-live:
+    image: exchange-service-live-image:v2
+    container_name: exchange-service-live-container
+    ports:
+      - "8094:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata" 
+      "KAFKA_BROKER_URL": "kafka-live:29092"
+      "ProducerTopicName": "live-exchange-workflow-topic"
+      "EnvironmentName":  "live"             
+    depends_on:
+      - azurite-live
+      - kafka-live
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  signalr-live:
+    image: signalr-server-live-image:v1
+    container_name: signalr-server-live
+    ports:
+      - "8098:5091"
+    environment:
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  aggregation-live:
+    image: aggregation-service-live-image:v1
+    container_name: aggregation-service-live-container
+    ports:
+      - "8095:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"
+      "KAFKA_BROKER_URL": "kafka-live:29092"
+    depends_on:
+      - kafka-live
+      - azurite-live
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  strategy-live:
+    image: strategy-service-live-image:v1
+    container_name: strategy-service-live-container
+    ports:
+      - "8096:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"
+    volumes:
+      # bind-mounted (not baked into the image) so strategies added/edited via the API
+      # land as real files in the repo, and new files dropped in here need no rebuild
+      - ./EventDrivenSystem/Source/StrategyService/StrategyService/StrategyService/config:/home/site/wwwroot/config
+    depends_on:
+      - azurite-live
+    restart: unless-stopped
+    networks:
+      - live-network
+
+  notification-live:
+    image: notification-service-live-image:v1
+    container_name: notification-service-live-container
+    ports:
+      - "9098:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"
+      "SignalRServiceUrl": "http://signalr-live:5091"
+      "KAFKA_BROKER_URL": "kafka-live:29092"
+      "RedisConnectionString": "redis-live:6379"
+    depends_on:
+      - kafka-live
+      - azurite-live
+      - redis-live
+      - signalr-live
+    restart: unless-stopped
+    networks:
+      - live-network
+  # exchange:
+  #   image: exchange-service-image:v3
+  #   container_name: exchange-service-container
+  #   ports:
+  #     - "8093:80"
+  #   environment:
+  #     "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+  #     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+  #     "ASPNETCORE_ENVIRONMENT": "docker"
+  #     "TZ": "Asia/Kolkata" 
+  #     "KAFKA_BROKER_URL": "kafka:29092"        
+  #   depends_on:
+  #     - azurite
+  #     - kafka
+  #   restart: unless-stopped
+  #   networks:
+  #     - mynetwork
+  
+  # country-service:
+  #   image: country-service-image:v1
+  #   container_name: country-service-container
+  #   ports:
+  #     - "9099:80"
+  #   environment:
+  #     "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+  #     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+  #     "ASPNETCORE_ENVIRONMENT": "docker"
+  #     "TZ": "Asia/Kolkata"    
+  #     "KAFKA_BROKER_URL": "kafka:29092"   
+  #     "HOLIDAY_API": "http://holiday-service-container"         
+  #   depends_on:
+  #     - holiday
+  #     - kafka
+  #     - azurite      
+  #   restart: unless-stopped
+  #   networks:
+  #     - mynetwork
+
+  # aggregation:
+    # image: aggregation-service-image:v2
+    # container_name: aggregation-service-container
+    # ports:
+    #   - "8095:80"
+    # environment:
+    #   "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+    #   "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+    #   "ASPNETCORE_ENVIRONMENT": "docker"
+    #   "TZ": "Asia/Kolkata"    
+    #   "KAFKA_BROKER_URL": "kafka:29092"       
+    #   "RedisConnectionString": "redis:6379"  
+    # depends_on:
+    #   - kafka
+    #   - azurite      
+    #   - redis
+    # #  - rabbitmq
+    # restart: unless-stopped
+    # networks:
+    #   - mynetwork
+
+  # signalr-server:
+  #   image: signalr-server-image:v3
+  #   container_name: signalr-server
+  #   ports:
+  #     - "8098:80"
+  #   environment:      
+  #     "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+  #     "ASPNETCORE_ENVIRONMENT": "docker"
+  #     "TZ": "Asia/Kolkata"   
+  #   depends_on:
+  #     - azurite
+  #   #  - rabbitmq
+  #   restart: unless-stopped
+  #   networks:
+  #     - mynetwork
+
+  # notification-service:
+  #   image: notification-service-image:v1
+  #   container_name: notification-service-container
+  #   ports:
+  #     - "9098:80"
+  #   environment:
+  #     "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+  #     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+  #     "ASPNETCORE_ENVIRONMENT": "docker"
+  #     "TZ": "Asia/Kolkata"    
+  #     "KAFKA_BROKER_URL": "kafka:29092"   
+  #     "RedisConnectionString": "redis:6379"
+  #     "SignalRServiceUrl": "http://signalr-server"   
+  #   depends_on:
+  #     - holiday
+  #     - kafka
+  #     - azurite 
+  #     - redis
+  #     - signalr-server     
+  #   #  - rabbitmq
+  #   restart: unless-stopped
+  #   networks:
+  #     - mynetwork
+
+  # helper-ohlc-savetoblob:
+  #   image: helper-ohlc-savetoblob-service:v1
+  #   container_name: helper-ohlc-savetoblob-container
+  #   ports:
+  #     - "8097:80"
+  #   environment:
+  #     "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+  #     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+  #     "ASPNETCORE_ENVIRONMENT": "docker"
+  #     "TZ": "Asia/Kolkata"    
+  #     "KAFKA_BROKER_URL": "kafka:29092" 
+  #     "WEBSITE_HOSTNAME": "localhost:8097" # Add this line
+  #   depends_on:
+  #     - azurite
+  #     - rabbitmq
+  #     - redis
+  #   #  - rabbitmq
+  #   restart: unless-stopped
+  #   networks:
+  #     - mynetworkfocker 
+volumes:
+  redis_data_live:
+  azurite-live-data:
+  kafka-data-live:
+  zookeeper-data-live:
+  zookeeper-log-live:
+networks:
+  live-network:    
+    driver: bridge
+

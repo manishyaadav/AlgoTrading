@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "PivotMarkingAggregationFunction": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7062"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "containerRunArguments": "--init",
+      "httpPort": 31136,
+      "useSSL": false
+    }
+  }
+}

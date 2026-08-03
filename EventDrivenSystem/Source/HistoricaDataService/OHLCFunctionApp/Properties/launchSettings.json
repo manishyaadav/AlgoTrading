@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "OHLCFunctionApp": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7159"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 31109,
+      "useSSL": false
+    }
+  }
+}
