@@ -248,9 +248,11 @@ services:
       "ASPNETCORE_ENVIRONMENT": "docker"
       "TZ": "Asia/Kolkata"
       "KAFKA_BROKER_URL": "kafka-live:29092"
+      "RedisConnectionString": "redis-live:6379"
     depends_on:
       - kafka-live
       - azurite-live
+      - redis-live
     restart: unless-stopped
     networks:
       - live-network

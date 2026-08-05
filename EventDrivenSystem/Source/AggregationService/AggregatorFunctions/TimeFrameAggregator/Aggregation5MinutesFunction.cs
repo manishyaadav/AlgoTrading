@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AggregatorFunctions.Common;
+using AggregatorFunctions.RedisConfig;
 using AggregatorFunctions.SharedLibrary.Events.Aggregation.TimeFrame;
 using Confluent.Kafka;
 using Microsoft.AspNetCore.Http;
@@ -16,18 +17,19 @@ namespace AggregatorFunctions.TimeFrameAggregator
     public class Aggregation5MinutesFunction
     {
         private readonly ILogger<Aggregation5MinutesFunction> _logger;
-        private static Dictionary<string, List<DataIngestionMinDataEvent>> _bufferData = new Dictionary<string, List<DataIngestionMinDataEvent>>();
-        private static List<Bucket> _bucket = new List<Bucket>();
         private static int _timeframe = 5;
-        private readonly IProducer<string, string> _producer;        
+        private readonly IProducer<string, string> _producer;
+        private readonly RedisHelper _redisHelper;
         private static string _producerTopicName = $"live-aggregation-ohlc-{_timeframe}min-topic";
 
         public Aggregation5MinutesFunction(ILogger<Aggregation5MinutesFunction> logger,
                     IConfiguration configuration,
-                    IProducer<string, string> producer)
+                    IProducer<string, string> producer,
+                    RedisHelper redisHelper)
         {
             _logger = logger;
-            _producer = producer; // Inject the producer   
+            _producer = producer; // Inject the producer
+            _redisHelper = redisHelper;
         }
 
         [Function("StreamAggregator5MFunction")]
@@ -60,6 +62,17 @@ namespace AggregatorFunctions.TimeFrameAggregator
             }
         }
 
+        // Was: append eventValue to a static in-memory List<DataIngestionMinDataEvent>, then on the
+        // next wall-clock bucket boundary crossing, re-scan the whole list for candles falling in the
+        // just-closed window and fold them into an OHLCV. Both the list and the wall-clock bucket
+        // tracker (_bufferData/_bucket) lived only in process memory — an aggregation-live restart
+        // mid-window silently dropped whatever had been buffered so far, and since the Kafka consumer
+        // group had already committed those offsets, that data was gone for good, not just delayed.
+        //
+        // Now: the running OHLCV aggregate for the ticker's in-progress bucket is persisted to a
+        // Redis Hash after every candle (RunningBucket, via RedisHelper), keyed off how many source
+        // candles have landed so far rather than wall-clock time. A restart just re-reads the hash
+        // and resumes exactly where it left off instead of losing the partial bucket.
         private async Task ProcessKafkaMessage(string eventData, ILogger logger)
         {
             DataIngestionMinDataEvent? eventValue;
@@ -68,104 +81,96 @@ namespace AggregatorFunctions.TimeFrameAggregator
             {
                 eventValue = JsonSerializer.Deserialize<DataIngestionMinDataEvent>(eventData);
 
-                if (eventValue != null)
+                if (eventValue == null)
                 {
-                    logger.LogInformation($"Event Details Ticker: {eventValue.Ticker}, Timeframe: {eventValue.Timeframe}, Time: {eventValue.WindowsStartTime}");
-
-                    if (eventValue != null)
-                    {
-                        if (!_bufferData.ContainsKey(eventValue.Ticker))
-                        {
-                            _bufferData[eventValue.Ticker] = new List<DataIngestionMinDataEvent>();
-                        }
-
-                        _bufferData[eventValue.Ticker].Add(eventValue);
-
-                        logger.LogInformation($"bufferData Count for key: {eventValue.Ticker}:{eventValue.Timeframe} is {_bufferData[eventValue.Ticker].Count}");
-
-                        DateTime currentTime = DateTime.Now;
-                        DateTime tmpBucketStart = currentTime.AddMinutes(-(currentTime.Minute % _timeframe));
-                        DateTime bucketStart = new DateTime(tmpBucketStart.Year, tmpBucketStart.Month, tmpBucketStart.Day, tmpBucketStart.Hour, tmpBucketStart.Minute, 0);
-                        DateTime bucketEnd = bucketStart.AddMinutes(_timeframe);
-
-                        logger.LogInformation($"\nTIMEFRAME: {eventValue.Timeframe}, CURRENT TIME: {currentTime}, BUCKET START: {bucketStart}, BUCKET END: {bucketEnd}");
-
-                        var bckt = _bucket.Where(x => x.InstrumentName.Equals(eventValue.Ticker)).FirstOrDefault();
-
-                        if (bckt != null)
-                        {
-                            if (bckt.currentBucket.startTime != bucketStart && bckt.currentBucket.endTime != bucketEnd)
-                            {
-
-                                var data = _bufferData[eventValue.Ticker].Where(x => x.WindowsStartTime >= bckt.currentBucket.startTime && x.WindowsStartTime < bckt.currentBucket.endTime).ToList();
-                                if (data.Count() >= _timeframe)
-                                {
-                                    // Create aggregation data 
-                                    var aggregatedData = CalculateMinAggregation(_timeframe, data);
-                                    if (aggregatedData != null)
-                                    {
-                                        var ohlcvJson = JsonSerializer.Serialize(aggregatedData);
-                                        string key = $"{aggregatedData.Ticker}:{_timeframe}Min";
-                                        // and push that to another topic
-                                        // Send the aggregated data to the Kafka topic
-                                        logger.LogInformation($"Aggregated Data: {ohlcvJson}");
-                                        await ProduceToKafka(_producerTopicName, ohlcvJson, key, logger);
-                                        // Set the buffer for the ticker to initial state
-                                        _bufferData[eventValue.Ticker] = new List<DataIngestionMinDataEvent>();
-                                    }
-                                    else
-                                    {
-                                        logger.LogError($"aggregation data is NULL");
-                                    }
-
-                                }
-
-                                bckt.prevBucket = new BucketItem()
-                                {
-                                    startTime = bckt.currentBucket.startTime,
-                                    endTime = bckt.currentBucket.endTime
-                                };
-                                bckt.currentBucket = new BucketItem()
-                                {
-                                    startTime = bucketStart,
-                                    endTime = bucketEnd,
-                                };
-                            }
-
-                        }
-                        else
-                        {
-                            _bucket.Add(new Bucket()
-                            {
-                                InstrumentName = eventValue.Ticker,
-                                currentBucket = new BucketItem()
-                                {
-                                    startTime = bucketStart,
-                                    endTime = bucketEnd,
-                                },
-                                prevBucket = new BucketItem()
-                                {
-                                    startTime = bucketStart,
-                                    endTime = bucketEnd,
-                                }
-                            });
-                        }
-
-                        var tmpBucketDisplay = _bucket.Where(x => x.InstrumentName.Equals(eventValue.Ticker)).FirstOrDefault();
-                        if (tmpBucketDisplay != null)
-                        {
-                            logger.LogWarning($"\n\tBUCKET DATA: {tmpBucketDisplay.InstrumentName}:{_timeframe}, \n\tCURRENT: start-{tmpBucketDisplay.currentBucket.startTime} end-{tmpBucketDisplay.currentBucket.endTime}, \n\tPREVIOUS: start-{tmpBucketDisplay.prevBucket.startTime} end-{tmpBucketDisplay.prevBucket.endTime}");
-                        }
-                    }
+                    return;
                 }
 
+                logger.LogInformation($"Event Details Ticker: {eventValue.Ticker}, Timeframe: {eventValue.Timeframe}, Time: {eventValue.WindowsStartTime}");
 
+                string bucketKey = $"Aggregation:Bucket:{eventValue.Ticker}:{_timeframe}min";
+                var existingHash = await _redisHelper.GetHashAsync(bucketKey);
+                var bucket = RunningBucket.FromHash(existingHash);
 
+                // Buckets are aligned to the timeframe's standard clock marks (:00/:05/:10/... for a
+                // 5-min bucket), derived from the candle's own event time — not wall-clock processing
+                // time (the old bug), and not just "whatever the first arriving candle's timestamp
+                // happens to be" (what this file did until now, which only looked aligned because the
+                // pipeline has run continuously since market open; a restart landing on an off-mark
+                // candle, e.g. 11:47, would have started a 11:47-11:51 bucket instead of resuming
+                // 11:45-11:49). Comparing against the floored value also subsumes the old "different
+                // day" check — a new day trivially floors to a different bucket start too.
+                DateTime alignedBucketStart = RunningBucket.FloorToBucketStart(eventValue.WindowsStartTime, _timeframe);
+                bool isFirstCandleInBucket = bucket == null || bucket.BucketStart != alignedBucketStart;
+
+                if (isFirstCandleInBucket)
+                {
+                    bucket = new RunningBucket
+                    {
+                        Open = eventValue.Open,
+                        High = eventValue.High,
+                        Low = eventValue.Low,
+                        Close = eventValue.Close,
+                        VolumeSum = eventValue.Volume,
+                        Count = 1,
+                        BucketStart = alignedBucketStart,
+                        BucketEnd = alignedBucketStart.AddMinutes(_timeframe)
+                    };
+                }
+                else
+                {
+                    bucket!.High = Math.Max(bucket.High, eventValue.High);
+                    bucket.Low = Math.Min(bucket.Low, eventValue.Low);
+                    bucket.Close = eventValue.Close;
+                    bucket.VolumeSum += eventValue.Volume;
+                    bucket.Count += 1;
+                }
+
+                logger.LogInformation($"Running bucket {eventValue.Ticker}:{_timeframe}min — Count: {bucket.Count}/{_timeframe}, O:{bucket.Open} H:{bucket.High} L:{bucket.Low} C:{bucket.Close} V:{bucket.VolumeSum}, Start:{bucket.BucketStart}");
+
+                if (bucket.Count >= _timeframe)
+                {
+                    var aggregatedData = BuildAggregationEvent(eventValue.Ticker, bucket);
+                    var ohlcvJson = JsonSerializer.Serialize(aggregatedData);
+                    string key = $"{aggregatedData.Ticker}:{_timeframe}Min";
+
+                    logger.LogInformation($"Aggregated Data: {ohlcvJson}");
+                    await ProduceToKafka(_producerTopicName, ohlcvJson, key, logger);
+
+                    // Bucket complete — clear the persisted state so the next candle starts a fresh one.
+                    await _redisHelper.DeleteKeyAsync(bucketKey);
+                }
+                else
+                {
+                    // 24h TTL is just a safety net against an abandoned key for a ticker that stops
+                    // flowing — the day-check above is what actually prevents a stale bucket from
+                    // being reused, regardless of whether the TTL has expired yet.
+                    await _redisHelper.SetHashAsync(bucketKey, bucket.ToHash(), TimeSpan.FromHours(24));
+                }
             }
             catch (Exception ex)
             {
                 logger.LogError("Aggregation Error: " + ex.Message);
             }
+        }
+
+        private TimeFrameAggregationEvent BuildAggregationEvent(string ticker, RunningBucket bucket)
+        {
+            var indianDateTimeOffset = DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow);
+
+            return new TimeFrameAggregationEvent()
+            {
+                Ticker = ticker,
+                Timeframe = _timeframe,
+                WindowsStartTime = bucket.BucketStart,
+                Open = bucket.Open,
+                High = bucket.High,
+                Low = bucket.Low,
+                Close = bucket.Close,
+                Volume = bucket.VolumeSum,
+                Producer = "aggregator.service",
+                ProducedAt = DateTimeHelper.ToIsoStringWithTime(indianDateTimeOffset)
+            };
         }
 
         private async Task ProduceToKafka(string topicName, string message, string key, ILogger logger)
@@ -184,33 +189,6 @@ namespace AggregatorFunctions.TimeFrameAggregator
             {
                 logger.LogError($"Delivery failed: {e.Error.Reason}");
             }
-        }
-
-        private TimeFrameAggregationEvent? CalculateMinAggregation(int timeframe, List<DataIngestionMinDataEvent> data)
-        {
-            var first = data.FirstOrDefault();
-            var last = data.LastOrDefault();
-
-            if (first != null && last != null)
-            {
-                var indianDateTimeOffset = DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow);
-
-                return new TimeFrameAggregationEvent()
-                {
-                    Ticker = first?.Ticker ?? string.Empty,
-                    Timeframe = timeframe,
-                    WindowsStartTime = first?.WindowsStartTime ?? DateTime.MinValue,                    
-                    Open = first?.Open ?? 0,
-                    High = data.Max(x => x.High),
-                    Low = data.Min(x => x.Low),
-                    Close = last?.Close ?? 0,
-                    Volume = data.Sum(x => x.Volume),
-                    Producer = "aggregator.service",
-                    ProducedAt = DateTimeHelper.ToIsoStringWithTime(indianDateTimeOffset)
-                };
-            }
-            else
-                return null;
         }
     }
 }

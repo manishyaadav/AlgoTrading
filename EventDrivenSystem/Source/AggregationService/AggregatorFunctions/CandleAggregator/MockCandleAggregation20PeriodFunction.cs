@@ -1,4 +1,5 @@
 using AggregatorFunctions.Common;
+using AggregatorFunctions.RedisConfig;
 using AggregatorFunctions.SharedLibrary;
 using AggregatorFunctions.SharedLibrary.Enums.Candle;
 using AggregatorFunctions.SharedLibrary.Events.Aggregation.Candle;
@@ -16,23 +17,27 @@ using System.Text.Json;
 
 namespace AggregatorFunctions.CandleAggregator
 {
+    // Despite the "Mock" name, this is wired into the live pipeline (consumes
+    // live-dataingestion-ohlc-topic, produces live-candle-stats-1min-20period-topic) — a rolling
+    // box-plot/candle-classification stats calculator over the trailing 20 1-min candles.
     public class MockCandleAggregation20PeriodFunction
-    {        
+    {
         private readonly ILogger<MockCandleAggregation20PeriodFunction> _logger;
-        private static Dictionary<string, List<TimeFrameAggregationEvent>> _bufferData = new Dictionary<string, List<TimeFrameAggregationEvent>>();
-        private static List<Bucket> _bucket = new List<Bucket>();
         private static int _timeframe = 1;
         private static int _preiod = 20;
         private readonly IProducer<string, string> _producer;
+        private readonly RedisHelper _redisHelper;
         private static string _producerTopicName = $"live-candle-stats-{_timeframe}min-{_preiod}period-topic";
 
         public MockCandleAggregation20PeriodFunction(
                                 ILogger<MockCandleAggregation20PeriodFunction> logger,
                                 IConfiguration configuration,
-                                 IProducer<string, string> producer)
+                                 IProducer<string, string> producer,
+                                 RedisHelper redisHelper)
         {
             _logger = logger;
-            _producer = producer; // Inject the producer               
+            _producer = producer; // Inject the producer
+            _redisHelper = redisHelper;
         }
 
         [Function("MockCandleAggregator20PeriodFunction")]
@@ -43,7 +48,7 @@ namespace AggregatorFunctions.CandleAggregator
                   ConsumerGroup = "live-candle-1min-20period-aggregator")] string eventDataJson, FunctionContext context)
         {
             var logger = context.GetLogger("KafkaFunction");
-            logger.LogInformation($"Kafka Trigged on topic : live-dataingestion-ohlc-topic at: {DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss")}");
+            logger.LogInformation($"Kafka Trigged on topic : live-dataingestion-ohlc-topic at: {DateTimeHelper.ToIsoStringWithTime(DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow))}");
             var eventDataValue = string.Empty;
 
             using JsonDocument document = JsonDocument.Parse(eventDataJson);
@@ -65,6 +70,14 @@ namespace AggregatorFunctions.CandleAggregator
             }
         }
 
+        // Was: append to a static in-memory List<TimeFrameAggregationEvent> capped at 20 by manually
+        // RemoveAt(0)-ing the oldest after each computation — lost on every restart, same failure
+        // mode as the fixed-size buckets elsewhere in this service. Now: the trailing-20 window is
+        // persisted to a Redis List (RPUSH + LTRIM to the last 20, via RedisHelper.PushToListAsync)
+        // so a restart just re-reads whatever candles already made it into the window instead of
+        // starting from empty. Unlike the fixed buckets, this window doesn't reset on completion —
+        // it's a true rolling window, so once it reaches 20 it recomputes stats on every subsequent
+        // candle, same as the original in-memory version did.
         private async Task ProcessKafkaMessage(string eventData, ILogger logger)
         {
             TimeFrameAggregationEvent? eventValue;
@@ -79,19 +92,20 @@ namespace AggregatorFunctions.CandleAggregator
 
                     if (eventValue != null)
                     {
-                        if (!_bufferData.ContainsKey(eventValue.Ticker))
+                        string windowKey = $"Aggregation:Window:{eventValue.Ticker}:{_timeframe}min:{_preiod}period";
+                        await _redisHelper.PushToListAsync(windowKey, JsonSerializer.Serialize(eventValue), _preiod, TimeSpan.FromHours(24));
+
+                        var windowValues = await _redisHelper.GetListAsync(windowKey);
+                        var data = windowValues
+                            .Select(v => JsonSerializer.Deserialize<TimeFrameAggregationEvent>(v!))
+                            .Where(e => e != null)
+                            .Select(e => e!)
+                            .ToList();
+
+                        logger.LogInformation($"Rolling window Count for key: {eventValue.Ticker}:{eventValue.Timeframe} is {data.Count}/{_preiod}");
+
+                        if (data.Count == _preiod)
                         {
-                            _bufferData[eventValue.Ticker] = new List<TimeFrameAggregationEvent>(_preiod);
-                        }
-
-                        _bufferData[eventValue.Ticker].Add(eventValue);
-
-                        logger.LogInformation($"bufferData Count for key: {eventValue.Ticker}:{eventValue.Timeframe} is {_bufferData[eventValue.Ticker].Count}");
-
-                        if (_bufferData[eventValue.Ticker].Count == _preiod)
-                        {
-                            var data = _bufferData[eventValue.Ticker].ToList();
-
                             // High - Low - Total Candle Size
                             var boxPlotCandleSize = BoxPlot.GetBoxPlot(data.Select(x => x.High - x.Low).ToList());
                             var boxPlotBodySize = BoxPlot.GetBoxPlot(data.Select(x => Math.Abs(x.Open - x.Close)).ToList());
@@ -142,8 +156,9 @@ namespace AggregatorFunctions.CandleAggregator
                             await ProduceToKafka(_producerTopicName, candleEventJson, key, logger);
                             logger.LogInformation($"Candle Aggregated Data: {candleEventJson} Sent");
 
-                            _bufferData[eventValue.Ticker].RemoveAt(0);
-                        }                        
+                            // No manual eviction needed — PushToListAsync's LTRIM already keeps the
+                            // Redis List capped at the last 20 entries on every push.
+                        }
                     }
                 }
 
