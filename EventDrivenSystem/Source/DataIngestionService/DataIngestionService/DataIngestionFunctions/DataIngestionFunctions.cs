@@ -179,15 +179,21 @@ namespace DataIngestionFunctions
                 logger.LogError($"Delivery failed: {e.Error.Reason}");
             }
         }
+        // The single point where a candle's WindowsStartTime gets converted from the wire's UTC
+        // value (what TradingView actually sends) to IST — every downstream stage (all 6 aggregation
+        // levels, the notification caches, the dashboard) just copies this field forward verbatim
+        // from here on, so converting once here is what makes it read as IST everywhere, not a
+        // change needed in each of those places individually.
         private DataIngestionMinDataEvent CreateDataForIngestion(TradingViewDataEvent dataIngestionEvent)
         {
             var indianDateTimeOffset = DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow);
-            
+            var windowsStartTimeIst = DateTimeHelper.ConvertToIndianTime(dataIngestionEvent.WindowsStartTime).DateTime;
+
             return new DataIngestionMinDataEvent()
             {
                 SourceToken = dataIngestionEvent.SourceToken,
                 Ticker = GetTickerFromSourceToken(dataIngestionEvent.SourceToken.ToLower(), dataIngestionEvent.WindowsStartTime),
-                WindowsStartTime = dataIngestionEvent.WindowsStartTime,
+                WindowsStartTime = windowsStartTimeIst,
                 Timeframe = dataIngestionEvent.Timeframe,
                 Open = dataIngestionEvent.Open,
                 High = dataIngestionEvent.High,
@@ -204,12 +210,13 @@ namespace DataIngestionFunctions
         private DataIngestionMinDataEvent CreateMockDataForIngestion(MockOhlcDataEvent dataIngestionEvent)
         {
             var indianDateTimeOffset = DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow);
+            var windowsStartTimeIst = DateTimeHelper.ConvertToIndianTime(dataIngestionEvent.WindowsStartTime).DateTime;
 
             return new DataIngestionMinDataEvent()
             {
                 SourceToken = dataIngestionEvent.ContractName,
                 Ticker = dataIngestionEvent.ContractName,
-                WindowsStartTime = dataIngestionEvent.WindowsStartTime,
+                WindowsStartTime = windowsStartTimeIst,
                 Timeframe = dataIngestionEvent.Timeframe,
                 Open = dataIngestionEvent.Open,
                 High = dataIngestionEvent.High,

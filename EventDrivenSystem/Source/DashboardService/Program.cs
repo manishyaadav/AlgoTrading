@@ -13,6 +13,11 @@ string composeProject = builder.Configuration["COMPOSE_PROJECT_NAME"] ?? "live";
 
 string ohlcApiBase = builder.Configuration["OhlcApiBase"] ?? "http://ohlc-live";
 
+// "Now" is always computed explicitly from DateTime.UtcNow + an explicit IST conversion — never
+// DateTime.Now — so every "today"/staleness/session-time calculation below stays correct regardless
+// of the container's TZ env var (or a future cloud host that doesn't set one the same way). See
+// IstNow() near the bottom of this file.
+
 var redisLazy = new Lazy<ConnectionMultiplexer>(() => ConnectionMultiplexer.Connect(redisConnectionString));
 var dockerClient = new DockerClientConfiguration(new Uri(dockerHost)).CreateClient();
 var ohlcHttpClient = new HttpClient { BaseAddress = new Uri(ohlcApiBase), Timeout = TimeSpan.FromSeconds(5) };
@@ -105,7 +110,7 @@ app.MapGet("/api/freshness", async () =>
             DateTime? updatedOn = DateTime.TryParse(updatedOnRaw, out var uo) ? uo : null;
             DateTime? lastUpdateOn = DateTime.TryParse(lastUpdateOnRaw, out var lu) ? lu : null;
 
-            double? ageSeconds = updatedOn.HasValue ? (DateTime.Now - updatedOn.Value).TotalSeconds : null;
+            double? ageSeconds = updatedOn.HasValue ? (IstNow() - updatedOn.Value).TotalSeconds : null;
             int expectedIntervalMinutes = int.TryParse(timeframe, out var tf) && tf > 0 ? tf : 1;
             bool isStale = ageSeconds is > 0 && ageSeconds.Value > expectedIntervalMinutes * 60 * 2;
 
@@ -153,7 +158,7 @@ app.MapGet("/api/country", async () =>
             NextHoliday: GetHolidayInfo(root, "NextHoliday"),
             UpdatedOn: GetField(root, "UpdatedOn"),
             LastUpdateOn: GetField(root, "LastUpdateOn"),
-            IsToday: date == DateTime.Now.ToString("yyyy-MM-dd")
+            IsToday: date == IstNow().ToString("yyyy-MM-dd")
         ));
     }
     catch (Exception ex)
@@ -169,7 +174,7 @@ app.MapGet("/api/exchanges", async () =>
         var redis = redisLazy.Value;
         var db = redis.GetDatabase();
         var server = redis.GetServer(redis.GetEndPoints().First());
-        var today = DateTime.Now.ToString("yyyy-MM-dd");
+        var today = IstNow().ToString("yyyy-MM-dd");
 
         var results = new List<ExchangeStatus>();
         await foreach (var key in server.KeysAsync(pattern: "Exchange:*"))
@@ -313,7 +318,7 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
     string countKeyPrefix, Func<string, string> snapshotKeyBuilder, string? provider = null)
 {
     var db = redis.GetDatabase();
-    var today = DateTime.Now.ToString("yyyy-MM-dd");
+    var today = IstNow().ToString("yyyy-MM-dd");
 
     var countKey = $"{countKeyPrefix}:{ticker}:{timeframeMinutes}min:{today}";
     long count = await db.SetLengthAsync(countKey);
@@ -344,7 +349,7 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
 
 static int ExpectedSoFar(int intervalMinutes, int expectedTotal)
 {
-    var now = DateTime.Now; // already IST via the container's TZ env var, same convention as every other service
+    var now = IstNow();
     var open = now.Date.AddHours(9).AddMinutes(15);
     var close = now.Date.AddHours(15).AddMinutes(30);
 
@@ -386,6 +391,15 @@ static async Task<bool> CheckAzurite(HttpClient ohlcClient, string ticker, strin
         return false;
     }
 }
+
+// The one and only place "current IST time" gets computed in this file — every "today"/staleness/
+// session-time calculation above calls this instead of DateTime.Now, so none of them silently break
+// if this container's TZ env var is ever missing or wrong (e.g. a future cloud host that doesn't set
+// it the same way docker-compose does today). DateTime.UtcNow is always correct regardless of host
+// timezone config; TimeZoneInfo does the IST conversion explicitly from there. (Top-level statements
+// can't declare a static readonly field to cache the TimeZoneInfo lookup, but TimeZoneInfo caches
+// resolved IDs internally after the first call, so this isn't a real per-request cost.)
+static DateTime IstNow() => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
 
 static HolidayInfo? GetHolidayInfo(JsonElement root, string propertyName)
 {

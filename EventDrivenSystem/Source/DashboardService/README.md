@@ -72,6 +72,10 @@ Kafka topic-level detail isn't duplicated here — click **Kafdrop ↗** in the 
 
 The sun/moon button in the header toggles dark/light mode; the choice is saved in `localStorage` and otherwise defaults to the browser's OS-level color scheme preference.
 
+## Host-timezone-independent timestamps
+
+Every "today"/staleness/session-time calculation (Data Freshness age, Country/Exchange `IsToday`, the Data page's per-contract expected-so-far count) goes through a local `IstNow()` helper in `Program.cs` — `TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, "India Standard Time")` — instead of `DateTime.Now`. `DateTime.Now` only happens to return IST today because this container's `TZ=Asia/Kolkata` env var is set; on a host where that's not true (a different machine, or a future cloud platform that resets/ignores container `TZ`), every one of those calculations would silently start using the host's actual timezone instead, with nothing to signal the drift. `DateTime.UtcNow` is always correct regardless of host config, so converting explicitly from there removes the dependency entirely. Same fix applied in `NotificationService` (count-key dates) and `AggregationService` (bucket alignment) — see those services' READMEs.
+
 ## How it talks to Docker
 
 Uses [Docker.DotNet](https://github.com/dotnet-ecosystem/Docker.DotNet) against the Docker Engine API, filtered to containers labeled `com.docker.compose.project=live`. No `docker` CLI is installed in the image.

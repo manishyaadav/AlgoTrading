@@ -104,6 +104,10 @@ The service handles two different time formats:
    - TimeZone: UTC (indicated by 'Z' suffix)
    - Used for: Cross-system synchronization
 
+#### Where WindowsStartTime becomes IST
+
+TradingView's raw payload — and everything published to `live-tradingview-ohlc-topic` — carries `WindowsStartTime` in this UTC form. `DataIngestionTradingViewFunction`'s `CreateDataForIngestion`/`CreateMockDataForIngestion` (in `DataIngestionFunctions.cs`) convert it to IST **once**, right here, via `DateTimeHelper.ConvertToIndianTime(...).DateTime`, before republishing the enriched event to `live-dataingestion-ohlc-topic`. Every stage downstream of that point — all 6 `AggregationService` timeframe functions, `NotificationService`'s caches, the dashboard — just copies the field forward verbatim, so this is the single place the conversion needs to happen for the whole aggregation pipeline to read as IST end to end. `live-tradingview-ohlc-topic` itself (and `NotificationService`'s parallel `DataFeed:TradingView:{Ticker}` cache, which consumes it directly) is **not** converted — it still carries the raw UTC value, since that's a separate, earlier branch this fix doesn't touch.
+
 #### Alert Format
 ```json
 {

@@ -129,7 +129,9 @@ namespace NotificationService.Functions
             // landed for this ticker today, for the dashboard's Data page (e.g. "312 / 375 today").
             // SET membership de-dupes automatically if the same candle is re-delivered.
             // Provider is part of the key so two providers feeding the same ticker don't collide.
-            string countKey = $"Ingestion:Count:{provider}:{dataEvent.Ticker}:1min:{DateTime.Now:yyyy-MM-dd}";
+            // DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow) — not DateTime.Now — so this key's
+            // date stays correct regardless of whether this container's TZ env var is set correctly.
+            string countKey = $"Ingestion:Count:{provider}:{dataEvent.Ticker}:1min:{DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow):yyyy-MM-dd}";
             var count = await _redisHelper.AddToCountSetAsync(countKey, dataEvent.WindowsStartTime.ToString("yyyy-MM-ddTHH:mm:ss"), TimeSpan.FromDays(3));
 
             _logger.LogInformation($"Updated Redis Cache for Token: {cacheData.SourceToken} (provider: {provider}) for DateTime: {cacheData.WindowsStartTime}. Today's 1-min count: {count}");

@@ -1,3 +1,4 @@
+using AggregatorFunctions.RedisConfig;
 using Confluent.Kafka;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
@@ -28,6 +29,8 @@ var host = new HostBuilder()
             };
             return new ProducerBuilder<string, string>(config).Build();
         });
+
+        services.AddSingleton<RedisHelper>();
     })
     .Build();
 
