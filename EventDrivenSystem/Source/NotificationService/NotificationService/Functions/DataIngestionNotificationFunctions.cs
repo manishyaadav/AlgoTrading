@@ -72,6 +72,12 @@ namespace NotificationService.Functions
             _logger.LogInformation("Kafka triggered function: Data Ingestion Notification SUCCESSFULLY PROCESSED");
         }
 
+        // dataEvent.DataSource now deserializes correctly (see DataEventBase.cs), but guard against
+        // stale/malformed messages still landing with the enum's unnamed default (0) — falls back to
+        // "Unknown" rather than silently mislabeling everything as TradingView again.
+        private static string ResolveDataSource(DataFeedSourceEnum dataSource) =>
+            Enum.IsDefined(typeof(DataFeedSourceEnum), dataSource) ? dataSource.ToString() : "Unknown";
+
         private DataIngestionNotification CreateNotification(DataIngestionMinDataEvent dataIngestionEvent)
         {
             _logger.LogInformation($"Creating notification for : {dataIngestionEvent.Ticker} for Date: {dataIngestionEvent.WindowsStartTime} received at: {DateTime.Now.ToLocalTime()}");
@@ -82,7 +88,7 @@ namespace NotificationService.Functions
                 CimplifyType = CimplifyTypeEnum.Notification,
                 DataType = DataFeedTypeEnum.OHLC.ToString(),
                 Timeframe = 1,      // currently hardcoding
-                DataSource = DataFeedSourceEnum.TradingView.ToString(),
+                DataSource = ResolveDataSource(dataIngestionEvent.DataSource),
                 Producer = "notification.service",
                 WindowsStartTime = DateTimeHelper.ToIsoStringWithTime(dataIngestionEvent.WindowsStartTime)
             };
@@ -94,7 +100,9 @@ namespace NotificationService.Functions
         {
             _logger.LogInformation($"Updating Redis Cache for Min Data: {dataEvent.Ticker} for Date: {dataEvent.WindowsStartTime}");
 
-            string key = $"DataIngestion:TradingView:{dataEvent.Ticker}";
+            string provider = ResolveDataSource(dataEvent.DataSource);
+
+            string key = $"DataIngestion:{provider}:{dataEvent.Ticker}";
             // get the cache if it's available, otherwise create a new one
             var dataIngestionCacheJson = await _redisHelper.GetKeyValueFromRedis(key);
             DataIngestionCache oldCache = new DataIngestionCache();
@@ -102,11 +110,11 @@ namespace NotificationService.Functions
             oldCache = JsonConvert.DeserializeObject<DataIngestionCache>(dataIngestionCacheJson);
 
             var indianDateTimeOffset = DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow);
-            
+
             DataIngestionCache cacheData = new DataIngestionCache()
             {
                 SourceToken = dataEvent.Ticker,
-                DataSource = DataFeedSourceEnum.TradingView.ToString(),
+                DataSource = provider,
                 DataType = DataFeedTypeEnum.OHLC.ToString(),
                 WindowsStartTime = DateTimeHelper.ToIsoStringWithTime(dataEvent.WindowsStartTime),
                 Timeframe = 1,
@@ -117,7 +125,14 @@ namespace NotificationService.Functions
             string value = JsonConvert.SerializeObject(cacheData);
             await _redisHelper.AddToRedis(key, value);
 
-            _logger.LogInformation($"Updated Redis Cache for Token: {cacheData.SourceToken} for DateTime: {cacheData.WindowsStartTime}");
+            // Separate from the snapshot cache above: tracks how many *distinct* 1-min candles have
+            // landed for this ticker today, for the dashboard's Data page (e.g. "312 / 375 today").
+            // SET membership de-dupes automatically if the same candle is re-delivered.
+            // Provider is part of the key so two providers feeding the same ticker don't collide.
+            string countKey = $"Ingestion:Count:{provider}:{dataEvent.Ticker}:1min:{DateTime.Now:yyyy-MM-dd}";
+            var count = await _redisHelper.AddToCountSetAsync(countKey, dataEvent.WindowsStartTime.ToString("yyyy-MM-ddTHH:mm:ss"), TimeSpan.FromDays(3));
+
+            _logger.LogInformation($"Updated Redis Cache for Token: {cacheData.SourceToken} (provider: {provider}) for DateTime: {cacheData.WindowsStartTime}. Today's 1-min count: {count}");
         }
 
         private async Task SendNotification(string message, string hubName)

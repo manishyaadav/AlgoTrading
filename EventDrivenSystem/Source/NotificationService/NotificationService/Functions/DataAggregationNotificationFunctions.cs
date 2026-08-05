@@ -305,7 +305,14 @@ namespace NotificationService.Functions
             string value = JsonConvert.SerializeObject(cacheData);
             await _redisHelper.AddToRedis(key, value);
 
-            _logger.LogInformation($"Updated Redis Cache for Token: {key} for DateTime: {value}");
+            // Separate from the snapshot cache above: tracks how many *distinct* candles have landed
+            // for this ticker/timeframe today, for the dashboard's Data page (e.g. "62 / 75 today").
+            // Shared by all six timeframe functions (5/10/15/30/60/75-min) since they all funnel
+            // through this one method — no per-timeframe duplication needed.
+            string countKey = $"Aggregation:Count:{dataEvent.Ticker}:{dataEvent.Timeframe}min:{DateTime.Now:yyyy-MM-dd}";
+            var count = await _redisHelper.AddToCountSetAsync(countKey, dataEvent.WindowsStartTime.ToString("yyyy-MM-ddTHH:mm:ss"), TimeSpan.FromDays(3));
+
+            _logger.LogInformation($"Updated Redis Cache for Token: {key} for DateTime: {value}. Today's {dataEvent.Timeframe}-min count: {count}");
         }
 
         private async Task SendNotification(string message, string hubName)

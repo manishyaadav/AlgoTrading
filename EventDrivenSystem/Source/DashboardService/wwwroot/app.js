@@ -24,6 +24,7 @@ const ICONS = {
   history: `<path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3"/><path d="M3.5 3.8v4.3h4.3"/><path d="M12 8v4.5l3 2"/>`,
   sliders: `<path d="M4 6h6M14 6h6M4 12h10M18 12h2M4 18h13M21 18h0"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="19" cy="18" r="2"/>`,
   bell: `<path d="M6.5 8.5a5.5 5.5 0 0 1 11 0c0 4.5 1.8 5.8 1.8 5.8H4.7s1.8-1.3 1.8-5.8z"/><path d="M9.7 18a2.3 2.3 0 0 0 4.6 0"/>`,
+  building: `<path d="M4 21h16M6 21V6.5L12 3l6 3.5V21"/><path d="M9.5 21v-5h5v5"/><path d="M9 9h1.4M13.6 9H15M9 13h1.4M13.6 13H15"/>`,
 };
 
 function iconFor(composeService) {
@@ -97,6 +98,16 @@ function showPage(key) {
   if (target === "strategy") {
     closeStrategyPanel();
     loadStrategyGrid();
+  }
+
+  if (target === "exchanges") {
+    loadCountryStatus();
+    loadExchangeTimelines();
+  }
+
+  if (target === "data") {
+    loadIngestionStatus();
+    loadAggregationStatus();
   }
 }
 
@@ -308,8 +319,157 @@ async function loadFreshness() {
   }
 }
 
+// --- Exchanges page: country gate + exchange session timeline ---
+
+const EXCHANGE_STAGES = [
+  { key: "Initiated", label: "Init", time: "09:00" },
+  { key: "PreOpened", label: "Pre-Open", time: "09:07" },
+  { key: "Opened", label: "Open", time: "09:15" },
+  { key: "PreClosed", label: "Pre-Close", time: "15:15" },
+  { key: "Closed", label: "Close", time: "15:30" },
+];
+
+function countryStatusHtml(c) {
+  if (!c.found) {
+    return `<div class="hint">No country data in Redis yet — country-live hasn't run since this stack started.</div>`;
+  }
+
+  const stateClass = c.state === "Normal" ? "badge-deployed" : c.state === "Holiday" || c.state === "Weekend" ? "badge-not-deployed" : "";
+  const staleBadge = c.isToday ? "" : `<span class="badge badge-not-deployed">Stale — last run ${esc(c.date)}, not today</span>`;
+
+  return `
+    <div class="strategy-card">
+      <div class="strategy-name">${esc(c.name)}</div>
+      <div class="strategy-badges">
+        <span class="badge ${stateClass}">${esc(c.state)}</span>
+        ${staleBadge}
+      </div>
+      <div class="strategy-meta">
+        <div><b>Date:</b> ${esc(c.date)}</div>
+        ${c.holiday ? `<div><b>Holiday today:</b> ${esc(c.holiday.reason)} (${esc(c.holiday.date)})</div>` : ""}
+        ${c.nextHoliday ? `<div><b>Next holiday:</b> ${esc(c.nextHoliday.reason)} (${esc(c.nextHoliday.date)})</div>` : ""}
+        <div><b>Updated:</b> ${esc(c.updatedOn)}</div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadCountryStatus() {
+  const el = document.getElementById("country-status");
+  try {
+    const res = await fetch("/api/country");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    el.innerHTML = countryStatusHtml(await res.json());
+  } catch (err) {
+    el.innerHTML = `<div class="error">Unable to load country status: ${err.message}</div>`;
+  }
+}
+
+function exchangeTimelineHtml(ex) {
+  // Stages fire strictly in order through the day and each overwrites the same Redis key, so
+  // "current state's position in the sequence" reliably implies every earlier stage already
+  // fired too — no need to track each of the 5 stages independently.
+  const currentIdx = ex.isToday ? EXCHANGE_STAGES.findIndex(s => s.key === ex.state) : -1;
+
+  const stages = EXCHANGE_STAGES.map((s, i) => `
+    <div class="timeline-stage ${i <= currentIdx ? "done" : "pending"}">
+      <div class="timeline-dot"></div>
+      <div class="timeline-label">${s.label}<div class="timeline-time">${s.time}</div></div>
+    </div>
+    ${i < EXCHANGE_STAGES.length - 1 ? `<div class="timeline-connector ${i < currentIdx ? "done" : "pending"}"></div>` : ""}
+  `).join("");
+
+  const metaText = ex.isToday
+    ? `Updated ${esc(ex.updatedOn)}`
+    : `No data for today yet — last known: ${esc(ex.date || "—")}`;
+
+  return `
+    <div class="exchange-row">
+      <div class="exchange-row-name">${esc(ex.exchangeName)}</div>
+      <div class="timeline">${stages}</div>
+      <div class="exchange-row-meta">${metaText}</div>
+    </div>
+  `;
+}
+
+async function loadExchangeTimelines() {
+  const el = document.getElementById("exchange-timelines");
+  try {
+    const res = await fetch("/api/exchanges");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const exchanges = await res.json();
+
+    el.innerHTML = exchanges.length
+      ? exchanges.map(exchangeTimelineHtml).join("")
+      : `<div class="hint">No exchange data in Redis yet — exchange-live hasn't run since this stack started.</div>`;
+  } catch (err) {
+    el.innerHTML = `<div class="error">Unable to load exchange timelines: ${err.message}</div>`;
+  }
+}
+
+// --- Data page: ingestion + aggregation candle-count status, per contract ---
+
+const STATUS_LABELS = { green: "On Track", amber: "Behind", red: "Behind / No Data", pending: "Pending" };
+
+function candleStatusCardHtml(item) {
+  const pct = item.expectedTotal ? Math.min(100, Math.round((item.count / item.expectedTotal) * 100)) : 0;
+  const label = STATUS_LABELS[item.status] || item.status;
+
+  return `
+    <div class="strategy-card">
+      <div class="strategy-name">
+        ${esc(item.contract)}
+        <span class="badge status-${item.status}">${esc(label)}</span>
+      </div>
+      <div class="progress-row">
+        <div class="progress-bar"><div class="progress-fill status-${item.status}" style="width:${pct}%"></div></div>
+        <div class="progress-count">${item.count} / ${item.expectedTotal}</div>
+      </div>
+      <div class="strategy-meta">
+        ${item.provider ? `<div><b>Provider:</b> ${esc(item.provider)}</div>` : ""}
+        <div><b>Expected by now:</b> ${item.expectedSoFar}</div>
+        <div><b>Latest candle:</b> ${esc(item.latestWindowStartTime || "—")}</div>
+        <div><b>Updated:</b> ${esc(item.updatedOn || "—")}</div>
+      </div>
+      <div class="storage-indicators">
+        <span class="storage-pill ${item.inRedis ? "ok" : "bad"}"><span class="storage-dot"></span>Redis</span>
+        <span class="storage-pill ${item.inAzurite ? "ok" : "bad"}"><span class="storage-dot"></span>Azurite</span>
+      </div>
+    </div>
+  `;
+}
+
+async function loadCandleStatus(endpoint, elementId, emptyText) {
+  const el = document.getElementById(elementId);
+  try {
+    const res = await fetch(endpoint);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const items = await res.json();
+
+    el.innerHTML = items.length
+      ? items.map(candleStatusCardHtml).join("")
+      : `<div class="hint">${emptyText}</div>`;
+  } catch (err) {
+    el.innerHTML = `<div class="error">Unable to load: ${err.message}</div>`;
+  }
+}
+
+function loadIngestionStatus() {
+  return loadCandleStatus("/api/data-ingestion", "ingestion-status", "No ingestion data yet — nothing has flowed through dataingestion today.");
+}
+function loadAggregationStatus() {
+  return loadCandleStatus("/api/aggregation", "aggregation-status", "No aggregation data yet — nothing has flowed through aggregation-live today.");
+}
+
 async function refresh() {
-  await Promise.all([loadServices(), loadFreshness()]);
+  await Promise.all([
+    loadServices(),
+    loadFreshness(),
+    loadCountryStatus(),
+    loadExchangeTimelines(),
+    loadIngestionStatus(),
+    loadAggregationStatus(),
+  ]);
   document.getElementById("last-refresh").textContent = `Updated ${new Date().toLocaleTimeString()}`;
 }
 

@@ -5,6 +5,8 @@ Timer-triggered Azure Function. Five daily timers publish exchange session-state
 - **No HTTP routes** — timer-only. The container's port only serves the Functions host default page.
 - Publishes to Kafka topic `live-exchange-workflow-topic` (`ProducerTopicName` env var), consumed by `notification-live`.
 
+⚠️ **If you rename a field on `ExchangeEvent`/`EventBase`/`CimplifyBase` via `[JsonPropertyName]`**: this service serializes with `System.Text.Json`, but `notification-live` deserializes with `Newtonsoft.Json`, which ignores that attribute entirely and falls back to matching the plain C# member name case-insensitively. A rename here that isn't a same-word case change (e.g. `ExchangeTimerAction` → `"action"`) silently fails to bind on the consumer side with no error at the point of the mistake — this already broke every exchange event once. See [NotificationService/README.md](../NotificationService/README.md#-cross-service-json-contract--a-real-bug-already-happened-here) before touching these shared model files.
+
 | Function | Cron | Fires at (IST) |
 |---|---|---|
 | `ExchangeTimerInitFunction` | `0 0 9 * * *` | 09:00 |

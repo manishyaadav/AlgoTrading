@@ -54,6 +54,21 @@ namespace NotificationService.RedisConfig
             return true;
         }
 
+        /// <summary>
+        /// Adds `member` to the Redis SET at `key` (SADD — automatically de-duplicates, so the same
+        /// candle re-arriving twice doesn't inflate the count) and refreshes the key's TTL. Returns
+        /// the set's new cardinality, i.e. the current count. Used for "how many candles landed
+        /// today" tracking — the single-value cache keys elsewhere only hold the latest snapshot,
+        /// not a running count, so this is a separate structure.
+        /// </summary>
+        public async Task<long> AddToCountSetAsync(string key, string member, TimeSpan expiry)
+        {
+            IDatabase db = _redis.GetDatabase();
+            await db.SetAddAsync(key, member);
+            await db.KeyExpireAsync(key, expiry);
+            return await db.SetLengthAsync(key);
+        }
+
         public async Task<string> GetKeyValueFromRedis(string key)
         {
             if (string.IsNullOrEmpty(key))
