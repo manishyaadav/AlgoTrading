@@ -4,9 +4,14 @@ Azure Function app exposing a CRUD-ish HTTP API over trading strategy definition
 
 ## Strategy config folder
 
-`StrategyService/config/strategies/*.json` — every file here is one strategy. **Drop a new `.json` file in and it's picked up automatically**, no code change or rebuild needed (the folder is bind-mounted into the container, not baked into the image — see compose section below).
+`StrategyService/config/strategies/{saved,deployed}/*.json` — **two folders, two independent lifecycles**. Drop a `.json` file into either and it's picked up automatically, no code change or rebuild needed (the whole `config` folder is bind-mounted into the container, not baked into the image — see compose section below).
 
-**Filename convention: `{strategy-name-slugified}-{version}.json`** — e.g. `second-income-1.0.2.json`. The slug (strategy name lowercased, spaces → `-`) is the strategy's **stable `id`**, used in every API/UI URL — it never changes across saves. The `-{version}` suffix is purely a storage/display detail for browsing the folder by eye: on every save, `StrategyMaker.SaveById` deletes whichever file currently holds that id and writes a new one under the new (auto-incremented) version — so there's always exactly **one current file per strategy**, not a version history. (A file dropped in without a version suffix, e.g. a hand-authored `my-strategy.json`, is still tolerated — its whole filename is treated as the id — but the next save through the API will rename it to the versioned form.)
+- **`saved/`** — the working draft. Every `PUT`/`POST` to `/api/strategies/{id}` overwrites this, whether or not that draft has ever been deployed. This is what `GET /api/strategies`/`GET /api/strategies/{id}` return, and what the dashboard's Edit form loads.
+- **`deployed/`** — a snapshot taken *at the moment `/deploy` is called*, holding the actual deployed rule content. `DeployedVersion` is **not** a field stored on the saved file anymore — `StrategyMaker` computes it on every read by checking whether a matching file exists here, and reads `GetDeployedDataRequirements()` (below) straight from this folder's actual content.
+
+Why the split exists: before it did, `DeployedVersion` was just a string field mutated on the *same* file `saved/` uses — so saving a new draft on top of a deployed version silently overwrote the deployed version's actual rules, with only the version *number* surviving. The data-requirements manifest read that overwritten content and could report a draft's requirements as if they were live. Splitting into two folders means a draft save can never touch what's actually deployed, and the manifest is always accurate to what was last explicitly deployed — verified: deploy v1.0.5, save an undeployed v1.0.6 draft with a different `Timeframe`, and the manifest still reports v1.0.5's requirements; only calling `/deploy` again updates it.
+
+**Filename convention (same in both folders): `{strategy-name-slugified}-{version}.json`** — e.g. `second-income-1.0.2.json`. The slug (strategy name lowercased, spaces → `-`) is the strategy's **stable `id`**, used in every API/UI URL — it never changes across saves. The `-{version}` suffix is purely a storage/display detail for browsing the folder by eye: on every save/deploy, `StrategyMaker` deletes whichever file currently holds that id *in that folder* and writes a new one under the new version — so there's always exactly **one current file per strategy per folder**, not a version history (deploying v1.0.6 over a previously-deployed v1.0.5 replaces `deployed/second-income-1.0.5.json`, it doesn't keep both). (A file dropped into `saved/` without a version suffix, e.g. a hand-authored `my-strategy.json`, is still tolerated — its whole filename is treated as the id — but the next save through the API will rename it to the versioned form.)
 
 Shape (matches the `Strategy`/`TradingStrategy`/`TradingRule`/`Operand` C# model in `Strategy/`):
 
@@ -49,8 +54,31 @@ The dashboard's Strategy form currently constrains these fields to closed lists 
 ### Versioning and deployment
 
 - `Version` auto-increments server-side on every save — `1.0.0` for a brand new strategy, then patch+1 (`1.0.1`, `1.0.2`, …) on each subsequent save. **Whatever `Version` value is in the request body is ignored** — the client can't set or spoof it; this is enforced in `StrategyMaker.SaveById`.
-- `DeployedVersion` only changes via the `/deploy` endpoint, which sets it to whatever `Version` currently is. A strategy can have unsaved/undeployed changes (`Version` ahead of `DeployedVersion`) — the dashboard grid shows this as a "Draft vX.Y.Z" badge alongside the "Deployed vX.Y.Z" one.
+- `DeployedVersion` only changes via the `/deploy` endpoint, which sets it to whatever `Version` currently is *and writes a real snapshot of the strategy to `config/strategies/deployed/`* (see "Strategy config folder" above) — it's computed from that snapshot on every read, not stored as a mutable field. A strategy can have unsaved/undeployed changes (`Version` ahead of `DeployedVersion`) — the dashboard grid shows this as a "Draft vX.Y.Z" badge alongside the "Deployed vX.Y.Z" one, and saving further drafts never changes what `deployed/` holds.
 - **Deploying an older version over a newer deployed one currently does no cleanup** — that behavior (what "cleanup" even means here — stopping a running strategy engine instance, discarding in-flight state, etc.) is intentionally deferred pending further discussion, not yet designed or implemented.
+
+### Data-requirements manifest
+
+`StrategyMaker.GetDeployedDataRequirements()` walks every currently-**deployed** strategy's rule tree (all 9 `TradingRule[]` arrays — `TradingSessionRules` plus LongEntry's and ShortEntry's 4 each) and collects every `(Instrument, Timeframe)` pair referenced by any operand carrying `Properties.Instrument` — Indicator operands (EMA, Supertrend, Pivot Central Range, …) **and** Expression operands that reference raw price data (e.g. `"Closing Price"`, `"Candle High"`) — unioned across all deployed strategies. This is meant to answer "what does the system actually need to be ingesting/aggregating right now" — the intended consumers are a future historical-data warm-up job (which pairs need backfilling before market open, and how much) and anything that reacts to a strategy being deployed or changed (e.g. gating which timeframe aggregations actually run, discussed but not yet built).
+
+Each pair breaks down into a `references` list — the specific `(Value, Type, Period, Multiplier, RelativePosition)` combinations that need it, with which strategy id(s) use each one. This is the part that actually answers "how much history": an `(Instrument, Timeframe)` pair alone doesn't say whether it's backing an `EMA(550)` or a `Supertrend(20,4)`, and those need very different amounts of backfill. `RelativePosition: "Previous"` on an otherwise-identical reference is its own separate entry, not merged with the "current value" one — e.g. `second-income` references `Supertrend(20,4)` twice on 5-min NIFTY: once for the live value, once with `RelativePosition: "Previous"` (its `UpdateStopLossRules` compares the two), and the manifest reports both because a warm-up job needs at least one extra prior bar of Supertrend for the second one that it wouldn't need for the first alone.
+
+Reads straight from `config/strategies/deployed/` — the actual deployed snapshot, not the saved draft — so it stays accurate even while a newer, undeployed draft with different requirements exists. Verified: deployed `second-income` at v1.0.5, saved an undeployed v1.0.6 draft with a different `Timeframe`, confirmed the manifest still reported v1.0.5's requirements untouched; redeploying (now at v1.0.6) updated it immediately. Before the `saved`/`deployed` folder split existed, this read the saved file directly and could report a draft's requirements as if they were live — that's the gap this split closes.
+
+### Warm-up plan — "fetch the last N days of {Instrument} data"
+
+`StrategyMaker.GetWarmUpPlan()` (`GET /api/strategies/warm-up-plan`) turns the manifest above into an actual day count per instrument — the manifest says *what* is needed, this says *how much*. Each `reference`'s `Period`/`Type`/`RelativePosition` maps to a day count via documented (not verified against a real indicator engine — none exists yet) assumptions in `ComputeDaysNeeded`:
+
+1. `Period > 0` (EMA, Supertrend, any period-based indicator or expression) → needs at least `Period` bars — the mathematical minimum, not an extra-converged buffer.
+2. `Period == 0` and `Type == "Indicator"` (e.g. `Pivot Central Range`, which has no Period/Multiplier of its own) → assumed to need exactly 1 prior trading day, independent of whatever Timeframe it's being *compared* against (conventionally computed from the prior day's H/L/C, not intraday bars).
+3. `Type == "Expression"` with a `RelativePosition` other than null/`"Current"` (e.g. `"Closing Price"` at `"Previous"`) → needs 1 prior bar at that Timeframe.
+4. `Type == "Expression"` with no `RelativePosition` (e.g. `"Candle High"` — asking for the live value) → 0 days, no backfill needed.
+
+An instrument's `daysToFetch` is the max `daysNeeded` across every reason that needs it — one historical pull covering the most demanding requirement covers every lesser one too. Verified against the real deployed `second-income` strategy: `Nifty_Index_Spot` → **8 days**, driven by `EMA(550)` on 5-min (550 bars × 5 min ÷ 375 trading-min/day ≈ 7.3 → 8), matching the "pull last 7-8 days" estimate from the original data-preparation discussion almost exactly — everything else it needs (`Supertrend(20,4)`, `Pivot Central Range`, the prior day's close) needs far less, so it doesn't change the number.
+
+If a strategy references an instrument other than the one you're expecting, it shows up as its own entry in the same array automatically — nothing here is hardcoded to NIFTY.
+
+⚠️ **Azure Functions routing gotcha, if you add another `strategies/<literal>` route**: the isolated-worker HTTP router resolves an ambiguous literal-vs-`{id}` match by **function name alphabetical order**, not route specificity. `GetDataRequirements` (D) sorts before `GetStrategy` (S) and correctly wins; a function literally named `GetWarmUpPlan` (W) sorts *after* `GetStrategy` and silently loses — every request landed in `GetStrategy` with a `"No strategy with id 'warm-up-plan'"` 404, despite both routes showing up correctly in the startup log's "Mapped function route" lines. Renaming the function to `GetDataWarmUpPlan` (matching the "GetData…" prefix that's already proven to sort correctly) fixed it. Name any future literal-route function so it alphabetically precedes `GetStrategy`.
 
 ## HTTP API
 
@@ -59,6 +87,8 @@ Route prefix: `api` (default). All responses are JSON, camelCase, with permissiv
 | Method | Route | Does |
 |---|---|---|
 | GET | `/api/strategies` | List all strategies (summary: id, name, exchange, broker, version, deployedVersion, risk, tradeType, goals, instruments, instrument→timeframe map) |
+| GET | `/api/strategies/data-requirements` | The deployed-strategies data-requirements manifest — array of `{instrument, timeframe, strategyIds, references}` (see above) |
+| GET | `/api/strategies/warm-up-plan` | The warm-up plan derived from the manifest — array of `{instrument, daysToFetch, reasons, strategyIds}` (see above) |
 | GET | `/api/strategies/{id}` | Full strategy JSON |
 | PUT / POST | `/api/strategies/{id}` | Create or overwrite — body is validated as parseable JSON before writing; `Version` is server-computed (see above), `DeployedVersion` carries over unchanged; on-disk file is re-serialized in PascalCase regardless of what casing was sent |
 | POST | `/api/strategies/{id}/deploy` | Set `DeployedVersion` = current `Version`. No other side effects yet |
@@ -66,6 +96,8 @@ Route prefix: `api` (default). All responses are JSON, camelCase, with permissiv
 
 ```bash
 curl http://localhost:8096/api/strategies
+curl http://localhost:8096/api/strategies/data-requirements
+curl http://localhost:8096/api/strategies/warm-up-plan
 curl http://localhost:8096/api/strategies/second-income
 curl -X PUT http://localhost:8096/api/strategies/my-strategy -H "Content-Type: application/json" -d '{"Exchange":"NSE","StrategyName":"My Strategy","Broker":"Zerodha","Goals":[],"Strategies":[]}'
 curl -X POST http://localhost:8096/api/strategies/my-strategy/deploy

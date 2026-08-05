@@ -39,6 +39,40 @@ namespace StrategyService
             return await JsonResponse(req, HttpStatusCode.OK, summaries);
         }
 
+        [Function(nameof(GetDataRequirements))]
+        public async Task<HttpResponseData> GetDataRequirements(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strategies/data-requirements")] HttpRequestData req)
+        {
+            // The manifest: every (Instrument, Timeframe) a currently-deployed strategy actually
+            // needs, unioned across all of them. Meant to be read by a future warm-up job and by
+            // whatever reacts to a strategy being deployed/changed — see StrategyMaker's doc comment
+            // for the known accuracy caveat (reflects the latest saved file, not necessarily the
+            // exact deployed version's rules, if a draft was saved on top without redeploying).
+            var requirements = StrategyMaker.GetDeployedDataRequirements();
+            return await JsonResponse(req, HttpStatusCode.OK, requirements);
+        }
+
+        // Named GetDataWarmUpPlan, not GetWarmUpPlan — Azure Functions' isolated-worker HTTP router
+        // resolves an ambiguous literal-vs-{id} route by function-name alphabetical order, not by
+        // route specificity: "GetWarmUpPlan" (W) sorts after "GetStrategy" (S), so strategies/{id}
+        // greedily wins and this route is never reached (confirmed by curl + container logs — the
+        // request executed Functions.GetStrategy, not this one, despite both routes being correctly
+        // mapped at startup). "GetData..." sorts before "GetStrategy" and reaches this function
+        // correctly, matching GetDataRequirements right above, which has the identical routing shape
+        // and works. If you add another strategies/<literal> route, name the function so it
+        // alphabetically precedes "GetStrategy" for the same reason.
+        [Function(nameof(GetDataWarmUpPlan))]
+        public async Task<HttpResponseData> GetDataWarmUpPlan(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strategies/warm-up-plan")] HttpRequestData req)
+        {
+            // "Fetch the last N trading days of {Instrument} data" per instrument any deployed
+            // strategy needs — built on top of the data-requirements manifest, turning "what's
+            // needed" into "how much." See StrategyMaker.GetWarmUpPlan's doc comment for the
+            // day-count assumptions this makes (none verified against a real indicator engine yet).
+            var plan = StrategyMaker.GetWarmUpPlan();
+            return await JsonResponse(req, HttpStatusCode.OK, plan);
+        }
+
         [Function(nameof(GetStrategy))]
         public async Task<HttpResponseData> GetStrategy(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strategies/{id}")] HttpRequestData req, string id)
