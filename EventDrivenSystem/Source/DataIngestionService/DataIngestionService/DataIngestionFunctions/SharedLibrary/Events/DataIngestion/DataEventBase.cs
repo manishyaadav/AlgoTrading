@@ -11,10 +11,11 @@ namespace SharedLibrary.Events.DataIngestion
 {
     public class DataEventBase : EventBase
     {
-        [JsonPropertyName("sourceName")]
+        // No [JsonPropertyName] renaming — see CimplifyBase.cs for why. "sourceName"/"dataType"
+        // don't case-insensitively match DataSource/DataType, so Newtonsoft on the consumer side
+        // silently deserialized these to enum default 0 (not a valid DataFeedSourceEnum member).
         public DataFeedSourceEnum DataSource { get; set; }
 
-        [JsonPropertyName("dataType")]
         public DataFeedTypeEnum DataType { get; set; }
     }
 }

@@ -6,11 +6,13 @@ An event-driven pipeline that ingests TradingView alerts (and scheduled exchange
 TradingView ─▶ ngrok ─▶ dataingestion (8080) ─▶ Kafka ─┬─▶ aggregation-live (8095) ─▶ Kafka
                                                         └─▶ notification-live (9098) ─▶ Redis + signalr-live (8098)
 
-country-live (8093) ──┐
-exchange-live (8094) ─┼─▶ Kafka ─▶ notification-live ─▶ signalr-live
-holiday-live (8091) ──┘ (called by country-live over HTTP)
+country-live (8093) ─┐
+exchange-live (8094) ┼─▶ Kafka ─▶ notification-live ─▶ Redis + signalr-live
+holiday-live (8091) ─┘ (called by country-live over HTTP)
 
 ohlc-live (8092) — historical OHLC query API, not wired into the Kafka flow
+strategy-live (8096) — CRUD API over strategy JSON configs, not wired into the Kafka flow (yet)
+dashboard-live (8099) — reads Docker + Redis + strategy-live directly; not part of the Kafka pipeline
 ```
 
 All services run under one Docker Compose stack, defined in [docker-compose-live.yml](docker-compose-live.yml), project name `live`.
@@ -40,7 +42,7 @@ docker-compose -f docker-compose-live.yml -p live down       # remove containers
 | Service (compose key) | Container | Host port | Purpose | Docs |
 |---|---|---|---|---|
 | `redis-live` | redis-live | 6382→6379 | Cache used by `notification-live` | — |
-| `dashboard-live` | dashboard-live | 8099→8080 | Status dashboard — service health + data freshness: http://localhost:8099 | [Source/DashboardService/README.md](EventDrivenSystem/Source/DashboardService/README.md) |
+| `dashboard-live` | dashboard-live | 8099→8080 | Status dashboard — service health, data freshness, exchange session timeline, ingestion/aggregation candle-count status, strategy management: http://localhost:8099 | [Source/DashboardService/README.md](EventDrivenSystem/Source/DashboardService/README.md) |
 | `azurite-live` | azurite-live | 10000-10002 | Local Azure Storage emulator (all Functions apps use it for `AzureWebJobsStorage`) | — |
 | `zookeeper-live` | zookeeper-live | internal (2182) | Kafka coordination | — |
 | `kafka-live` | kafka-live | 9092 (host) / 29092 (internal) | Message broker — the backbone of the whole pipeline | — |
@@ -121,8 +123,11 @@ Exact image name, tag, and build path per service are in each service's own READ
 ## Known issues
 
 1. ~~`country-live` and `exchange-live` publish to the wrong topic names.~~ **Fixed** — `ProducerTopicName` for both now includes the `live-` prefix (`live-country-workflow-topic` / `live-exchange-workflow-topic`), matching what `notification-live` subscribes to.
-2. **`signalr-live`'s `/pivotMarkingHub` is mapped to `StrategyHub`** instead of a dedicated hub class ([Program.cs](EventDrivenSystem/Source/Helpers/SignalRServer/Program.cs) — `app.MapHub<StrategyHub>("/pivotMarkingHub")`), so anything sent to that hub name currently lands in the strategy hub group instead.
-3. **`dataingestion`'s `TradingViewAlertToSQLFunction`** (mapped at `api/dataingestion/tradingview/funcTradingViewAlertTestSQL`) writes to SQL only — there's no SQL Server in this compose stack, so calling it will fail unless one is provisioned separately.
+2. ~~`notification-live` crashed on every exchange event.~~ **Fixed** — a `System.Text.Json` (producer) vs. `Newtonsoft.Json` (consumer) property-renaming mismatch meant `ExchangeEvent.ExchangeTimerAction` silently deserialized to an invalid enum value, throwing on every message and never writing to Redis. See [NotificationService/README.md](EventDrivenSystem/Source/NotificationService/README.md#-cross-service-json-contract--a-real-bug-already-happened-here) for the full explanation and what to avoid when adding a new event type.
+3. ~~The ingestion data provider was hardcoded to `"TradingView"` in Redis keys.~~ **Fixed** — `DataEventBase.DataSource` had the same JSON-contract mismatch as issue #2 (silently deserialized to enum `0` on `notification-live`), which is why the literal string was hardcoded past it instead of being read from the event. Both are now fixed; the provider is discovered dynamically end-to-end (producer → Redis key → dashboard). See [NotificationService/README.md](EventDrivenSystem/Source/NotificationService/README.md#data-provider-is-discovered-not-hardcoded).
+4. ~~`DataIngestionService/DataIngestionFunctions/TradingViewFunctions.cs` didn't compile.~~ **Fixed** — found while rebuilding the image for issue #3: the file contained a dead, half-pasted second copy of the class (a constructor and `TradingViewMinDataFeedFunction` referencing `ITradingViewService`/`IKafkaProducerService`/`KafkaSettings`/`RateLimitSettings` — types that don't exist anywhere in this project, confirmed against `Program.cs`'s DI registrations) with malformed brace nesting on top. Rewritten using the same `IProducer<string, string>` pattern already used by every other file in this service.
+5. **`signalr-live`'s `/pivotMarkingHub` is mapped to `StrategyHub`** instead of a dedicated hub class ([Program.cs](EventDrivenSystem/Source/Helpers/SignalRServer/Program.cs) — `app.MapHub<StrategyHub>("/pivotMarkingHub")`), so anything sent to that hub name currently lands in the strategy hub group instead.
+6. **`dataingestion`'s `TradingViewAlertToSQLFunction`** (mapped at `api/dataingestion/tradingview/funcTradingViewAlertTestSQL`) writes to SQL only — there's no SQL Server in this compose stack, so calling it will fail unless one is provisioned separately.
 
 ## Folders that can likely be removed
 

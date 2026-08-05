@@ -512,3 +512,118 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   font-weight: 600;
 }
 
+/* --- Exchange session timeline --- */
+
+.exchange-row {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.exchange-row-name { font-weight: 600; font-size: 14px; margin-bottom: 14px; }
+
+.timeline {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.timeline-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 90px;
+}
+
+.timeline-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.timeline-stage.done .timeline-dot { background: var(--green); border-color: var(--green); box-shadow: 0 0 0 3px var(--green-bg); }
+
+.timeline-connector {
+  flex: 1 1 0;
+  height: 2px;
+  background: var(--border);
+  margin-top: 7px;
+  min-width: 20px;
+}
+.timeline-connector.done { background: var(--green); }
+
+.timeline-label {
+  margin-top: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+}
+.timeline-stage.done .timeline-label { color: var(--text); }
+.timeline-time { font-size: 10px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+
+.exchange-row-meta { margin-top: 14px; font-size: 11.5px; color: var(--muted); }
+
+/* --- Data page: candle-count status cards --- */
+
+.sub-section-label { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 8px; }
+
+.candle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* status-* covers both text (badge) and background (progress fill) use */
+.status-green { color: var(--green); }
+.status-amber { color: var(--yellow); }
+.status-red { color: var(--red); }
+.status-pending { color: var(--muted); }
+
+.badge.status-green { background: var(--green-bg); }
+.badge.status-amber { background: rgba(229,185,63,0.15); }
+.badge.status-red { background: var(--red-bg); }
+.badge.status-pending { background: var(--bg); border-color: var(--border); }
+
+.progress-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.progress-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.progress-fill { height: 100%; border-radius: 999px; }
+.progress-fill.status-green { background: var(--green); }
+.progress-fill.status-amber { background: var(--yellow); }
+.progress-fill.status-red { background: var(--red); }
+.progress-fill.status-pending { background: var(--muted); }
+.progress-count { flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+
+.storage-indicators { display: flex; gap: 8px; margin-top: 12px; }
+.storage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.storage-pill .storage-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.storage-pill.ok { color: var(--green); }
+.storage-pill.ok .storage-dot { background: var(--green); }
+.storage-pill.bad { color: var(--red); }
+.storage-pill.bad .storage-dot { background: var(--red); }
+

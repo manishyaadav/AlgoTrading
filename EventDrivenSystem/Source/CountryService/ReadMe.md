@@ -7,6 +7,8 @@ Daily timer-triggered Azure Function. Once a day it determines the current "coun
 - Calls `holiday-live` over HTTP to resolve the holiday calendar.
 - Publishes to Kafka topic `live-country-workflow-topic`, consumed by `notification-live`.
 
+⚠️ **If you rename a field on `CountryEvent`/`EventBase`/`CimplifyBase` via `[JsonPropertyName]`**: this service serializes with `System.Text.Json`, but `notification-live` deserializes with `Newtonsoft.Json`, which ignores that attribute and matches the plain C# member name case-insensitively instead. `CountryEvent` currently works only because its renames (`"name"`, `"date"`, `"state"`) happen to be lowercased versions of the real property names — Newtonsoft's case-insensitive fallback rescues it by coincidence, not by design. `ExchangeEvent` had the identical pattern with a rename that *wasn't* just a case change, and it silently broke every event. See [NotificationService/README.md](../NotificationService/README.md#-cross-service-json-contract--a-real-bug-already-happened-here) before touching these shared model files.
+
 ## Operations
 
 ### Compose

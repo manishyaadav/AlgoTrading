@@ -28,6 +28,8 @@
   <nav class="sidebar" id="sidebar">
     <button class="nav-item" data-page="services" data-icon="graph"><span class="nav-icon"></span><span class="nav-label">Services &amp; Connections</span></button>
     <button class="nav-item" data-page="freshness" data-icon="freshness"><span class="nav-icon"></span><span class="nav-label">Data Freshness</span></button>
+    <button class="nav-item" data-page="exchanges" data-icon="building"><span class="nav-icon"></span><span class="nav-label">Exchanges</span></button>
+    <button class="nav-item" data-page="data" data-icon="stack"><span class="nav-icon"></span><span class="nav-label">Data</span></button>
     <button class="nav-item" data-page="strategy" data-icon="target"><span class="nav-icon"></span><span class="nav-label">Strategy</span></button>
     <button class="nav-item" data-page="datasync" data-icon="sync"><span class="nav-icon"></span><span class="nav-label">Data Sync</span></button>
     <button class="nav-item" data-page="backtest" data-icon="history"><span class="nav-icon"></span><span class="nav-label">Backtest</span></button>
@@ -68,6 +70,39 @@
           </thead>
           <tbody><tr><td colspan="7">Loading…</td></tr></tbody>
         </table>
+      </section>
+    </div>
+
+    <div class="page" data-page="exchanges">
+      <section>
+        <h2><span class="section-icon" data-icon="building"></span>Exchanges</h2>
+        <p class="hint"><code>country-live</code> runs once at 00:01 IST, checks the holiday calendar, and gates the whole day (Normal / Holiday / Weekend) — that state is what everything else implicitly depends on. <code>exchange-live</code> then fires 5 fixed-time timers through the session; each stage lights up once today's timer has actually run.</p>
+
+        <div class="rules-group-label">Country</div>
+        <div id="country-status">Loading…</div>
+
+        <div class="rules-group-label">Exchange Session Timeline</div>
+        <div id="exchange-timelines">Loading…</div>
+      </section>
+    </div>
+
+    <div class="page" data-page="data">
+      <section>
+        <h2><span class="section-icon" data-icon="stack"></span>Data</h2>
+        <p class="hint">A regular NSE session is 9:15–3:30, 375 one-minute bars. Progress is compared against how far into the session we actually are right now, not just the raw count — so "behind" only lights up once it's genuinely behind, not just because the day hasn't finished yet. Discovers whatever contracts are actually flowing through Redis — nothing here is hardcoded to a fixed ticker list.</p>
+
+        <div class="rules-group-label">Data Ingestion (1-min)</div>
+        <div id="ingestion-status" class="candle-grid">Loading…</div>
+
+        <div class="rules-group-label">Aggregation</div>
+        <div class="sub-section-label">Timeframes</div>
+        <div id="aggregation-status" class="candle-grid">Loading…</div>
+
+        <div class="sub-section-label">Indicators</div>
+        <div class="placeholder">
+          <span class="placeholder-icon" data-icon="target"></span>
+          <p>Nothing computes indicators (Supertrend, EMA, Pivot Central Range, …) yet — this is a placeholder for once that exists.</p>
+        </div>
       </section>
     </div>
 
