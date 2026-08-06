@@ -757,10 +757,13 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   border-top: 1px solid var(--border);
 }
 
-/* Highlighted variant — for the Data page's "Data Ingestion (1-min)" /
-   "Aggregation" titles specifically, which carry more weight on that page
-   than a regular eyebrow (there's no h2-per-subsection to lean on, unlike
-   Exchanges' "Country" / "Exchange Session Timeline", which stay plain). */
+/* Highlighted variant — top-level section titles within a page that carry
+   more weight than a regular eyebrow (there's no h2-per-subsection to lean
+   on, unlike a page boundary). Used by Data's "Data Ingestion (1-min)" /
+   "Aggregation" and Exchanges' "Country" / "Exchange Session Timeline".
+   Opt-in per label, not a redefinition of .rules-group-label itself — the
+   Strategy rule builder's "Long Entry" / "Short Entry" stay plain, one level
+   down from a section they're already inside. */
 .rules-group-label--highlight {
   display: flex;
   align-items: center;

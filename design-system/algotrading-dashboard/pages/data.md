@@ -81,12 +81,12 @@ still `--red`/`--yellow` via the rail and the badge.
 ## Section titles
 
 "Data Ingestion (1-min)" and "Aggregation" use `.rules-group-label--highlight` instead of the
-plain `.rules-group-label` that Exchanges' "Country" / "Exchange Session Timeline" use. This page
-has no per-subsection `h2` to lean on the way a page boundary does, so these two carry more visual
-weight: Archivo instead of the Fira Code eyebrow face, `--text` instead of `--muted`, an `--accent`
-dot and top rule. Scoped to this page only — don't apply the modifier class to `.rules-group-label`
-elsewhere (Exchanges, the Strategy rule builder's Long/Short Entry labels) without deciding that's
-wanted there too.
+plain `.rules-group-label`. This page has no per-subsection `h2` to lean on the way a page
+boundary does, so these two carry more visual weight: Archivo instead of the Fira Code eyebrow
+face, `--text` instead of `--muted`, an `--accent` dot and top rule. Exchanges' "Country" /
+"Exchange Session Timeline" use the same modifier for the same reason — see `pages/exchanges.md`.
+The Strategy rule builder's Long/Short Entry labels stay plain on purpose: they're one level down
+from a section they're already inside, not a page-level heading.
 
 ## Checklist
 
