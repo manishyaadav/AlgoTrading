@@ -48,3 +48,6 @@ local.settings.json
 # Docker Desktop / local scratch
 **/bin/Debug/
 **/bin/Release/
+
+# Claude Code — personal tooling/skills and per-machine settings, not project code
+.claude/

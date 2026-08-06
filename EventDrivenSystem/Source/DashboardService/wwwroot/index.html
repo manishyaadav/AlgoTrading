@@ -4,22 +4,40 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AlgoTrading — Dashboard</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f1115'/%3E%3Cpath d='M5 17l4-6 3 3 5-8' stroke='%233ecf8e' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23080b12'/%3E%3Cpath d='M5 17l4-6 3 3 5-8' stroke='%23ffb44a' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Inter+Tight:wght@400;500;600&family=Fira+Code:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="fx.css">
 <script>
-  // applied before first paint so there's no flash of the wrong theme
+  // applied before first paint so there's no flash of the wrong theme, and no
+  // flash of full motion for someone who has turned effects down
   (function () {
-    var saved = localStorage.getItem("theme");
-    if (saved) document.documentElement.setAttribute("data-theme", saved);
+    // dark by default: always stamp an explicit theme so the OS preference
+    // never silently flips a trading terminal to light mid-session
+    document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") || "dark");
+    var fx = localStorage.getItem("fx");
+    document.documentElement.setAttribute("data-fx",
+      ["full", "calm", "off"].indexOf(fx) >= 0 ? fx
+        : (window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "calm" : "full"));
   })();
 </script>
 </head>
 <body>
-<header>
-  <h1>AlgoTrading Dashboard</h1>
+<header class="bar">
+  <a class="mark" href="home.html">
+    <svg class="mark__glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 17l4-6 3 3 5-8"/></svg>
+    <span class="mark__name">AlgoTrading</span>
+  </a>
   <div class="header-right">
-    <a href="http://localhost:9000" target="_blank" rel="noopener">Kafdrop ↗</a>
-    <span id="last-refresh">—</span>
+    <span class="stamp" id="stamp" title="—">
+      <span id="stamp-date">—</span>
+      <span class="stamp__time" id="stamp-time">--:--:--</span>
+      <span class="stamp__zone">IST</span>
+    </span>
+    <a class="bar__link" href="home.html">Console</a>
+    <a class="bar__link" href="http://localhost:9000" target="_blank" rel="noopener">Kafdrop ↗</a>
     <button id="theme-toggle" class="icon-btn" title="Toggle dark/light mode" aria-label="Toggle dark/light mode"></button>
   </div>
 </header>
@@ -44,7 +62,7 @@
           <h2><span class="section-icon" data-icon="graph"></span>Services &amp; Connections</h2>
           <button id="orientation-toggle" class="icon-btn" title="Switch panel orientation" aria-label="Switch panel orientation"></button>
         </div>
-        <p class="hint">Arrows show <code>depends_on</code> relationships read live from Docker — not hand-drawn, so this can't drift out of sync with the compose file.</p>
+        <p class="hint">Arrows show <code>depends_on</code> relationships read live from Docker — not hand-drawn, so this can't drift out of sync with the compose file. Point at a service to light up just the arrows touching it.</p>
         <div id="services-graph" class="graph-wrapper">
           <svg id="connections"></svg>
           <div id="services" class="category-row">Loading…</div>
@@ -168,5 +186,6 @@
 </div>
 
 <script src="app.js"></script>
+<script src="fx.js"></script>
 </body>
 </html>

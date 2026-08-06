@@ -22,7 +22,12 @@ var redisLazy = new Lazy<ConnectionMultiplexer>(() => ConnectionMultiplexer.Conn
 var dockerClient = new DockerClientConfiguration(new Uri(dockerHost)).CreateClient();
 var ohlcHttpClient = new HttpClient { BaseAddress = new Uri(ohlcApiBase), Timeout = TimeSpan.FromSeconds(5) };
 
-app.UseDefaultFiles();
+// "/" serves the console entry page; the dashboard itself stays at /index.html,
+// which is where every card on the console links to.
+app.UseDefaultFiles(new DefaultFilesOptions
+{
+    DefaultFileNames = new List<string> { "home.html", "index.html" }
+});
 app.UseStaticFiles(new StaticFileOptions
 {
     // this dashboard's static files change often during development — force browsers to

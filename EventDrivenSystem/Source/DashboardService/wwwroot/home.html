@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlgoTrading — Console</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23080b12'/%3E%3Cpath d='M5 17l4-6 3 3 5-8' stroke='%23ffb44a' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Inter+Tight:wght@400;500;600&family=Fira+Code:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="fx.css">
+<script>
+  // applied before first paint so there's no flash of the wrong theme — same key the dashboard uses
+  (function () {
+    // dark by default: always stamp an explicit theme so the OS preference
+    // never silently flips a trading terminal to light mid-session
+    document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") || "dark");
+    var fx = localStorage.getItem("fx");
+    document.documentElement.setAttribute("data-fx",
+      ["full", "calm", "off"].indexOf(fx) >= 0 ? fx
+        : (window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "calm" : "full"));
+  })();
+</script>
+</head>
+<body>
+
+<a class="skip" href="#console">Skip to status</a>
+
+<header class="bar">
+  <a class="mark" href="#console">
+    <svg class="mark__glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 17l4-6 3 3 5-8"/></svg>
+    <span class="mark__name">AlgoTrading</span>
+  </a>
+  <div class="bar__right">
+    <span class="stamp" id="stamp">
+      <span id="stamp-date">—</span>
+      <span class="stamp__time" id="stamp-time">--:--:--</span>
+      <span class="stamp__zone">IST</span>
+    </span>
+    <a class="bar__link" href="index.html">Open dashboard</a>
+    <button id="theme-toggle" class="ghost-btn" title="Toggle dark/light mode" aria-label="Toggle dark/light mode"></button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── The console: one screen that answers "is it running?" ───────────── -->
+  <section class="console" id="console">
+    <p class="eyebrow" id="phase-label">Reading session state</p>
+
+    <h1 class="verdict" id="verdict">Connecting to the&nbsp;stack</h1>
+
+    <p class="summary" id="summary">Waiting on the first poll.</p>
+
+    <!-- Signature: stacked contract tracks on one shared 9:15→15:30 axis -->
+    <div class="session" id="session">
+      <div class="session__head">
+        <h2 class="session__title">The session</h2>
+        <ol class="gates" id="gates" aria-label="Exchange session stages"></ol>
+      </div>
+
+      <div class="axis">
+        <span class="axis__end">09:15</span>
+        <div class="axis__rule"></div>
+        <span class="axis__end">15:30</span>
+      </div>
+
+      <div class="tracks" id="tracks" style="--now: 0%">
+        <div class="now" id="now" aria-hidden="true"><span class="now__flag" id="now-flag">09:15</span></div>
+        <p class="tracks__empty" id="tracks-empty">No contracts are flowing yet today.</p>
+      </div>
+
+      <p class="legend">
+        <span class="key key--fill"></span>ingested
+        <span class="key key--gap"></span>expected by now, missing
+        <span class="key key--rest"></span>rest of session
+      </p>
+    </div>
+  </section>
+
+  <!-- ── System widgets ──────────────────────────────────────────────────── -->
+  <section class="routes">
+    <h2 class="routes__title">System</h2>
+    <div class="wgrid" id="widgets"></div>
+    <p class="legend" id="widgets-note"></p>
+  </section>
+
+  <!-- ── Where to go ─────────────────────────────────────────────────────── -->
+  <section class="routes">
+    <h2 class="routes__title">Go to</h2>
+    <div class="grid" id="routes"></div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span>Reads Docker, Redis and the strategy service directly — nothing here is hand-maintained.</span>
+  <span class="foot__right">
+    <a href="http://localhost:9000" target="_blank" rel="noopener">Kafdrop ↗</a>
+    <span id="poll-state" class="poll">—</span>
+  </span>
+</footer>
+
+<script src="home.js"></script>
+<script src="fx.js"></script>
+</body>
+</html>
