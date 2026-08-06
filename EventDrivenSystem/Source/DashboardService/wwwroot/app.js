@@ -556,41 +556,61 @@ function computePhase() {
 }
 
 function applyPhase() {
-  document.documentElement.setAttribute("data-phase", computePhase());
-  renderHeaderStatus();
+  const phase = computePhase();
+  document.documentElement.setAttribute("data-phase", phase);
+  renderHeaderStatus(phase);
 }
 
 // Header status pill (visible on every page, between the mark and the clock).
 // Same lastCountry/lastExchanges computePhase() already has — no extra request.
-function renderHeaderStatus() {
+// Phrased like the console's verdict ("Normal Day · Session Over (NSE, NFO)"):
+// day state first (Normal/Holiday/Weekend/not gated), then what the session is
+// doing right now, then which exchanges that covers — never a fixed list, just
+// whatever exchange-live has actually reported. "closed" already covers the
+// full 15:30→midnight window (istMinuteOfDay runs 0-1439; nothing resets it
+// early) — it only stops applying once the calendar date rolls over and
+// country-live re-gates the new day, same as every other "isToday" check here.
+function renderHeaderStatus(phase) {
   const textEl = document.getElementById("header-status-text");
   const pillEl = document.getElementById("header-status");
   if (!textEl || !pillEl) return;
 
-  let text, title;
   const c = lastCountry;
+  const exchangeNames = lastExchanges.map(e => e.exchangeName).join(", ");
+  const suffix = exchangeNames ? ` (${exchangeNames})` : "";
 
-  if (!c || !c.found) {
-    text = "Not gated yet";
+  let text, title;
+
+  if (phase === "down") {
+    text = "Service Issue";
+    title = "One or more containers are not running — see Services & Connections";
+  } else if (!c || !c.found) {
+    text = "Not Gated Yet";
     title = "country-live hasn't run since this stack started";
   } else if (!c.isToday) {
-    text = `${c.state} · stale`;
+    text = `${c.state} Day · Stale`;
     title = `Country state last set ${c.date}, not today`;
-  } else if (c.state !== "Normal") {
-    text = c.state;
-    title = c.holiday ? `${c.holiday.reason} (${c.holiday.date})` : `${c.state} — no session today`;
+  } else if (c.state === "Holiday") {
+    text = `Holiday${suffix}`;
+    title = c.holiday ? `${c.holiday.reason} (${c.holiday.date})` : "Holiday — no session today";
+  } else if (c.state === "Weekend") {
+    text = `Weekend${suffix}`;
+    title = "No session — weekend";
+  } else if (phase === "pre") {
+    text = `Normal Day Session Starts Soon${suffix}`;
+    title = "Opens at 09:15 IST";
+  } else if (phase === "late") {
+    text = `Normal Day Pre-Close${suffix}`;
+    title = "Closes at 15:30 IST";
+  } else if (phase === "closed") {
+    text = `Normal Day Session Over${suffix}`;
+    title = "Session ended at 15:30 IST";
+  } else if (exchangeNames) {
+    text = `Normal Day Market Open${suffix}`;
+    title = "Session runs 09:15–15:30 IST";
   } else {
-    const ex = lastExchanges.find(e => /nse/i.test(e.exchangeName)) || lastExchanges[0];
-    if (!ex) {
-      text = "Normal · no exchange data";
-      title = "No exchange has reported yet";
-    } else if (!ex.isToday) {
-      text = `${ex.exchangeName} · not run today`;
-      title = `Last known state: ${stageLabelFor(ex.state)} (${ex.date || "—"})`;
-    } else {
-      text = `${ex.exchangeName} · ${stageLabelFor(ex.state)}`;
-      title = `Updated ${clockTime(ex.updatedOn)}`;
-    }
+    text = "Normal Day · No Exchange Data";
+    title = "No exchange has reported yet";
   }
 
   textEl.textContent = text;

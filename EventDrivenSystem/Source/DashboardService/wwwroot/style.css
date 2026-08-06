@@ -182,6 +182,8 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 20px 24px;
   border-bottom: 1px solid var(--border);
 }
@@ -208,17 +210,19 @@ header {
   stroke-linejoin: round;
 }
 
-.header-right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--muted); }
+.header-right { display: flex; align-items: center; flex-wrap: wrap; row-gap: 8px; gap: 18px; font-size: 13px; color: var(--muted); }
 
 .stamp {
   display: inline-flex;
   align-items: baseline;
+  flex-shrink: 0;
   gap: 8px;
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .stamp__time { color: var(--text); }
 .stamp__zone { font-size: 10px; letter-spacing: 0.14em; }
@@ -232,12 +236,14 @@ header {
 .status-pill {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 7px;
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .status-pill__dot {
   width: 7px;
