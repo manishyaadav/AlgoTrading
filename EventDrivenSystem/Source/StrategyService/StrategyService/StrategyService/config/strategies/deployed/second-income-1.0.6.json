@@ -1,8 +1,8 @@
 {
   "Exchange": "NSE",
   "StrategyName": "Second Income",
-  "Version": "1.0.5",
-  "DeployedVersion": "1.0.1",
+  "Version": "1.0.6",
+  "DeployedVersion": "1.0.6",
   "Broker": "Zerodha",
   "Goals": [
     "Second Income"
@@ -23,7 +23,7 @@
             "Properties": {
               "Period": 0,
               "Multiplier": 0,
-              "Timeframe": "1 Day",
+              "Timeframe": "15 Minutes",
               "Instrument": "Nifty_Index_Spot"
             }
           },
