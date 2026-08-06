@@ -40,6 +40,30 @@ and failing AA. Always re-measure a tinted chip **composited over its surface**,
 token against the surface — see `pages/freshness-and-strategy.md`.
 | Line | `#35435c` | `#b9c2d4` | `--line` | Connection graph edges |
 
+### Two accents: `--phase` and `--accent`
+
+Both files define both. Keeping them apart is what lets the whole app warm up during market
+hours without breaking the controls.
+
+| Token | Moves with | Carries | Used by |
+|---|---|---|---|
+| `--phase` | the trading day | atmosphere, session state | page wash, mark glyph, section icon, console eyebrow / rail fill / now-rule / current gate |
+| `--accent` | nothing — fixed indigo | interaction | focus rings, active nav, hover borders, links, `.btn-primary`, card icons |
+
+`--phase` maps from `data-phase` on `<html>`, set by `applyPhase()` (dashboard) and `render()`
+(console), from the same country + exchange + services payloads:
+
+| `data-phase` | When | `--phase` |
+|---|---|---|
+| `pre` | before 09:15 IST on a Normal day | `--accent` / indigo |
+| `open`, `late` | during the session | `--yellow` / saffron |
+| `closed`, `off` | after the close, holiday, weekend, day not gated | `--muted` |
+| `down` | any container not `running` | `--red` |
+
+**Never key a control to `--phase`.** An earlier version made the console's focus ring
+phase-driven, so the ring turned low-contrast grey the moment the session closed. Controls need a
+stable, always-legible colour.
+
 `--accent` is **brand/interactive only, never a status**. Status stays green/red/yellow so a
 colour never means two things. The light values for accent, green and yellow are darker than
 their dark-theme counterparts on purpose — they carry 10–12px text and need 4.5:1 on a light
@@ -59,9 +83,13 @@ Three roles, shared with `home.css`. All three load from one Google Fonts reques
 | Body | Inter Tight | 400/500 | Prose, hints, table cells, form fields |
 | Data & labels | Fira Code | 400–600, `tabular-nums` | Every number, timestamp, badge, pill, `th`, and small-caps label |
 
-- **Section headings (`h2`) are eyebrows, not titles:** Fira Code, 13px, uppercase, `0.12em`
-  tracking, `--muted`. They label the region the way the console's eyebrows do; they are not
-  meant to compete with the content.
+- **Section headings (`h2`) are the page title:** Archivo, `wdth 112 / wght 700`, 28px,
+  `-0.025em`, `--text`. One piece of display type per page. Before this the largest text on any
+  dashboard page was the 18px header mark and every page opened with a 13px monospace caption —
+  no voice at all. The eyebrow role sits below, on `.rules-group-label` / `.sub-section-label`.
+- **Prose is capped at `74ch`** (`.hint`) with `line-height: 1.6`. Body copy is 16px/1.5 with
+  `-webkit-font-smoothing: antialiased`, matching `home.css` — without these the same typeface
+  renders visibly heavier and tighter than on the console.
 - **Anything live and numeric gets `tabular-nums`** — values update every 5s and proportional
   figures make columns jitter as digit counts change.
 - Reach for Archivo only where a name needs weight. Prose stays Inter Tight; a page set mostly in
@@ -91,6 +119,23 @@ Optional, for cases where border-only separation isn't enough (e.g. dropdowns, t
 ```
 
 Keep these subtle — the current design leans on `--border` + `--panel` contrast, not elevation, and that's consistent with the "Real-Time Monitoring / Data-Dense Dashboard" style (flat, high information density, minimal chrome).
+
+### Surfaces
+
+Top-level panels use `--surface` (`--panel` at 78%) with `backdrop-filter: blur(6px)` and a
+**12px** radius, so they pick up the page wash the way the console's `.session` does. That's
+`.category-panel`, `.exchange-row`, `.candle-row`, `.strategy-row`, `.status-card`,
+`.strategy-panel`, `.placeholder`.
+
+Nested tiles — the `.card` service tiles inside `.category-panel` — stay **opaque `--panel` at
+8px**. A nested element sharing its container's radius and translucency stops reading as nested.
+
+### The page wash — do not strengthen it
+
+`body::before` is a 60vh radial gradient of `--phase` at **9%**. It is capped there for a
+measured reason: `--muted` body copy sits directly on this background, and at 13% the wash lifted
+it to **4.26:1** in dark/open, under AA. 9% holds the worst case at 4.63. Re-measure before
+raising it.
 
 ### Border Radius (existing, for reference — already consistent)
 

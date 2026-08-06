@@ -9,11 +9,17 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Inter+Tight:wght@400;500;600&family=Fira+Code:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="fx.css">
 <script>
   // applied before first paint so there's no flash of the wrong theme — same key the dashboard uses
   (function () {
-    var saved = localStorage.getItem("theme");
-    if (saved) document.documentElement.setAttribute("data-theme", saved);
+    // dark by default: always stamp an explicit theme so the OS preference
+    // never silently flips a trading terminal to light mid-session
+    document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") || "dark");
+    var fx = localStorage.getItem("fx");
+    document.documentElement.setAttribute("data-fx",
+      ["full", "calm", "off"].indexOf(fx) >= 0 ? fx
+        : (window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "calm" : "full"));
   })();
 </script>
 </head>
@@ -73,6 +79,13 @@
     </div>
   </section>
 
+  <!-- ── System widgets ──────────────────────────────────────────────────── -->
+  <section class="routes">
+    <h2 class="routes__title">System</h2>
+    <div class="wgrid" id="widgets"></div>
+    <p class="legend" id="widgets-note"></p>
+  </section>
+
   <!-- ── Where to go ─────────────────────────────────────────────────────── -->
   <section class="routes">
     <h2 class="routes__title">Go to</h2>
@@ -90,5 +103,6 @@
 </footer>
 
 <script src="home.js"></script>
+<script src="fx.js"></script>
 </body>
 </html>

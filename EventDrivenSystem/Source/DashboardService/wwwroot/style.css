@@ -16,6 +16,7 @@
   --yellow: #ffb44a;    /* home's --saffron — status: caution/in-between */
   --yellow-bg: rgba(255,180,74,0.15);
   --line: #35435c;
+  --surface: color-mix(in srgb, var(--panel) 78%, transparent); /* translucent --panel, so top-level panels pick up the page wash */
   font-family: "Inter Tight", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 
   /* spacing scale — formalizes the app's existing 8/12/14/16/24/32px rhythm */
@@ -97,6 +98,18 @@
   --line: #35435c;
 }
 
+/* Same split as home.css: --phase moves with the trading day and carries
+   atmosphere (the page wash, the mark); --accent is fixed and carries
+   interaction (focus rings, active nav, hover borders, primary buttons).
+   Keeping them apart is what lets the whole app warm up during market hours
+   without the focus ring going grey after the close. */
+:root                      { --phase: var(--accent); }
+:root[data-phase="open"],
+:root[data-phase="late"]   { --phase: var(--yellow); }
+:root[data-phase="closed"],
+:root[data-phase="off"]    { --phase: var(--muted); }
+:root[data-phase="down"]   { --phase: var(--red); }
+
 * { box-sizing: border-box; }
 
 :where(a, button, input, select):focus-visible {
@@ -109,23 +122,37 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-/* Top bar — matches home.html's .bar so the console and the dashboard read
-   as one app. A subtle accent wash near the mark stands in for home's
-   full-page phase wash; the dashboard has no session-phase concept of its
-   own, so --accent stays the fixed brand indigo rather than shifting live. */
+/* The same wash home.css puts over the console, so the two surfaces sit in the
+   same light instead of one being lit and the other flat black.
+   Held at 9% because .hint copy sits directly on it — see home.css. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 60vh;
+  background: radial-gradient(90% 100% at 50% 0%, color-mix(in srgb, var(--phase) 9%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+  transition: background 420ms cubic-bezier(.22,.61,.36,1);
+  z-index: 0;
+}
+
+header, .app-body { position: relative; z-index: 1; }
+
+/* Top bar — same metrics as home.html's .bar (20px padding, 15px/700 mark) so
+   the header doesn't resize when you cross between the console and here. */
 header {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--border);
-  background:
-    radial-gradient(60% 220% at 12% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 70%),
-    var(--bg);
 }
 
 .mark {
@@ -135,15 +162,16 @@ header {
   text-decoration: none;
   color: var(--text);
   font-family: Archivo, sans-serif;
-  font-variation-settings: "wdth" 112, "wght" 750;
-  font-size: 18px;
+  font-variation-settings: "wdth" 112, "wght" 700;
+  font-size: 15px;
   letter-spacing: -0.01em;
 }
 .mark__glyph {
   width: 22px;
   height: 22px;
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--phase);
+  transition: stroke 420ms cubic-bezier(.22,.61,.36,1);
   stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -224,10 +252,22 @@ header {
 .nav-icon { display: inline-flex; flex-shrink: 0; }
 .nav-icon .icon { width: 18px; height: 18px; }
 
-main { flex: 1; min-width: 0; padding: 24px; max-width: 1100px; }
+main { flex: 1; min-width: 0; padding: 24px; max-width: 1180px; }
 
 .page { display: none; }
 .page.active { display: block; }
+
+/* The console's staged entrance, carried over so switching pages lands the
+   same way the console loads. Sections aren't recreated by the 5s data
+   refresh, so this plays on navigation only, not on every poll. */
+@media (prefers-reduced-motion: no-preference) {
+  .page.active > section { animation: rise 460ms cubic-bezier(.22,.61,.36,1) backwards; }
+  .page.active > section:nth-child(2) { animation-delay: 60ms; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
 
 .placeholder {
   display: flex;
@@ -236,9 +276,10 @@ main { flex: 1; min-width: 0; padding: 24px; max-width: 1100px; }
   text-align: center;
   gap: 8px;
   padding: 48px 24px;
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--muted);
 }
 .placeholder-icon { color: var(--muted); opacity: 0.6; }
@@ -265,24 +306,35 @@ section { margin-bottom: 32px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .section-head h2 { margin-bottom: 0; }
 
-/* Section headings read as home's "eyebrow" labels — same monospace utility
-   face used there for every number/label/eyebrow on the page. */
+/* The page title is the one piece of display type on a dashboard page. Before
+   this, the largest text anywhere was the 18px header mark and every page
+   opened with a 13px monospace caption — no voice at all. The eyebrow role
+   moved down to .rules-group-label / .sub-section-label, which is where a
+   small tracked label actually belongs. */
 h2 {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--muted);
-  margin-bottom: 12px;
+  gap: 11px;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 112, "wght" 700;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  color: var(--text);
+  margin: 0 0 10px;
 }
 
-.hint { font-size: 12px; color: var(--muted); margin-top: -4px; margin-bottom: 12px; }
+.hint {
+  max-width: 74ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 18px;
+}
 
 .icon { width: 16px; height: 16px; flex-shrink: 0; }
-.section-icon { display: inline-flex; color: var(--muted); }
+.section-icon { display: inline-flex; color: var(--phase); transition: color 420ms cubic-bezier(.22,.61,.36,1); }
+.section-icon .icon { width: 24px; height: 24px; }
 
 .graph-wrapper { position: relative; }
 
@@ -335,10 +387,11 @@ h2 {
 .category-panel {
   flex: 1 1 0;
   min-width: 0;
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border);
   border-top: 2px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 14px;
 }
 .category-panel[data-health="ok"]   { border-top-color: var(--green); }
@@ -558,9 +611,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .strategy-rows { display: flex; flex-direction: column; gap: 10px; }
 
 .strategy-row {
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 14px 16px;
   transition: border-color var(--motion-fast);
 }
@@ -610,9 +664,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 /* --- Strategy view/edit panel --- */
 
 .strategy-panel {
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 18px;
 }
 
@@ -798,9 +853,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 /* --- Exchange session timeline --- */
 
 .exchange-row {
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 16px;
   margin-bottom: 14px;
 }
@@ -897,9 +953,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 }
 
 .candle-row {
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 14px 16px;
 }
 
@@ -1009,9 +1066,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 /* --- Shared status card (country gate on Exchanges) --- */
 
 .status-card {
-  background: var(--panel);
+  background: var(--surface);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 16px;
 }
 

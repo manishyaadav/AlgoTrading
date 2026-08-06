@@ -526,8 +526,10 @@ async function loadCountryStatus() {
   try {
     const res = await fetch("/api/country");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    el.innerHTML = countryStatusHtml(await res.json());
+    lastCountry = await res.json();
+    el.innerHTML = countryStatusHtml(lastCountry);
   } catch (err) {
+    lastCountry = null;
     el.innerHTML = `<div class="error">Unable to load country status: ${err.message}</div>`;
   }
 }
@@ -570,13 +572,55 @@ async function loadExchangeTimelines() {
     const res = await fetch("/api/exchanges");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const exchanges = await res.json();
+    lastExchanges = exchanges;
 
     el.innerHTML = exchanges.length
       ? exchanges.map(exchangeTimelineHtml).join("")
       : `<div class="hint">No exchange data in Redis yet — exchange-live hasn't run since this stack started.</div>`;
   } catch (err) {
+    lastExchanges = [];
     el.innerHTML = `<div class="error">Unable to load exchange timelines: ${err.message}</div>`;
   }
+}
+
+/* --- Session phase -------------------------------------------------------
+   Same computation home.js runs, over the same payloads — refresh() already
+   polls country and exchanges on every cycle regardless of which page is
+   showing, so this costs no extra requests. It drives --phase, which colours
+   the page wash and the mark; interactive colour stays on --accent. */
+
+let lastCountry = null;
+let lastExchanges = [];
+
+const SESSION_OPEN_MIN = 9 * 60 + 15;
+const SESSION_CLOSE_MIN = 15 * 60 + 30;
+
+// Explicit IST via the header clock's formatter, matching the backend's
+// IstNow() — correct from any viewer timezone.
+function istMinuteOfDay() {
+  const p = {};
+  for (const { type, value } of IST_FMT.formatToParts(new Date())) p[type] = value;
+  return Number(p.hour) * 60 + Number(p.minute);
+}
+
+function computePhase() {
+  if (lastServices.length && lastServices.some(s => s.state !== "running")) return "down";
+
+  const c = lastCountry;
+  if (!c || !c.found || !c.isToday) return "off";
+  if (c.state && c.state !== "Normal") return "off";
+
+  const ex = lastExchanges.find(e => /nse/i.test(e.exchangeName)) || lastExchanges[0];
+  if (ex && ex.isToday && ex.state === "PreClosed") return "late";
+
+  const m = istMinuteOfDay();
+  if (m < SESSION_OPEN_MIN) return "pre";
+  if (m >= SESSION_CLOSE_MIN) return "closed";
+  return "open";
+}
+
+function applyPhase() {
+  document.documentElement.setAttribute("data-phase", computePhase());
 }
 
 // --- Data page: ingestion + aggregation candle-count status, per contract ---
@@ -676,6 +720,7 @@ async function refresh() {
     loadIngestionStatus(),
     loadAggregationStatus(),
   ]);
+  applyPhase();
   document.getElementById("stamp").title = `Data last refreshed ${new Date().toLocaleTimeString()}`;
 }
 

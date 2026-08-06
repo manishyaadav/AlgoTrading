@@ -20,6 +20,18 @@
   --shell: 1180px;
   --fast: 150ms ease;
   --slow: 420ms cubic-bezier(.22,.61,.36,1);
+
+  /* Aliases of this file's names onto style.css's, so fx.css can address one
+     vocabulary across both pages. They resolve per theme because the sources
+     are themselves redefined on :root. */
+  --bg: var(--ink);
+  --panel: var(--ink-2);
+  --panel-2: var(--ink-3);
+  --border: var(--rule);
+  --text: var(--bone);
+  --muted: var(--dim);
+  --motion-fast: var(--fast);
+  --motion-standard: var(--slow);
 }
 
 :root[data-theme="light"] {
@@ -52,14 +64,21 @@
   }
 }
 
-/* The page's accent is the session's phase. Everything keyed to --accent moves
-   with the trading day rather than being a fixed brand colour. */
-:root                      { --accent: var(--indigo); }
-:root[data-phase="open"]   { --accent: var(--saffron); }
-:root[data-phase="late"]   { --accent: var(--saffron); }
-:root[data-phase="closed"] { --accent: var(--dim); }
-:root[data-phase="off"]    { --accent: var(--dim); }
-:root[data-phase="down"]   { --accent: var(--ember); }
+/* Two accents, deliberately separate:
+
+   --phase moves with the trading day. It carries atmosphere and session state:
+   the page wash, the eyebrow, the mark, the rail fill, the now-rule.
+
+   --accent is fixed. It carries interaction: focus rings, hover borders, links.
+   These must not drift with the market — an earlier version keyed the focus
+   ring to the phase, so the ring turned low-contrast grey the moment the
+   session closed. Controls need a stable, always-legible colour. */
+:root                      { --accent: var(--indigo); --phase: var(--indigo); }
+:root[data-phase="open"]   { --phase: var(--saffron); }
+:root[data-phase="late"]   { --phase: var(--saffron); }
+:root[data-phase="closed"] { --phase: var(--dim); }
+:root[data-phase="off"]    { --phase: var(--dim); }
+:root[data-phase="down"]   { --phase: var(--ember); }
 
 * { box-sizing: border-box; }
 
@@ -74,13 +93,16 @@ body {
 }
 
 /* A single wash of the phase colour from the top edge — the only atmosphere
-   on the page, and it changes colour when the market opens. */
+   on the page, and it changes colour when the market opens.
+   9%, not more: --dim/--muted body copy sits directly on this background, and
+   at 13% the wash lifted it to 4.26:1 in dark/open — under AA. 9% holds the
+   worst case at 4.63. Re-measure before increasing it. */
 body::before {
   content: "";
   position: fixed;
   inset: 0 0 auto 0;
   height: 60vh;
-  background: radial-gradient(90% 100% at 50% 0%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, transparent 70%);
+  background: radial-gradient(90% 100% at 50% 0%, color-mix(in srgb, var(--phase) 9%, transparent) 0%, transparent 70%);
   pointer-events: none;
   transition: background var(--slow);
   z-index: 0;
@@ -143,7 +165,7 @@ a { color: inherit; }
   width: 22px;
   height: 22px;
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--phase);
   stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -205,7 +227,7 @@ a { color: inherit; }
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--phase);
   transition: color var(--slow);
 }
 .eyebrow::before {
@@ -308,7 +330,7 @@ a { color: inherit; }
 .gate--passed::before { background: currentColor; }
 .gate--current {
   opacity: 1;
-  color: var(--accent);
+  color: var(--phase);
   font-weight: 600;
 }
 .gate--current::before { background: currentColor; }
@@ -340,7 +362,7 @@ a { color: inherit; }
   bottom: 0;
   left: var(--now, 0%);
   width: 1px;
-  background: var(--accent);
+  background: var(--phase);
   opacity: 0.85;
   pointer-events: none;
   transition: left var(--slow), background var(--slow);
@@ -353,7 +375,7 @@ a { color: inherit; }
   transform: translateX(-50%);
   padding: 2px 6px;
   border-radius: 3px;
-  background: var(--accent);
+  background: var(--phase);
   color: var(--ink-2); /* inverts with the theme, so the flag stays legible on either accent */
   font-family: "Fira Code", monospace;
   font-size: 10px;
@@ -418,7 +440,7 @@ a { color: inherit; }
 }
 .layer--rest { color: var(--rule); }
 .layer--gap  { color: var(--ember); clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); opacity: 0.55; }
-.layer--fill { color: var(--accent); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
+.layer--fill { color: var(--phase); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
 
 .track--behind .layer--fill { color: var(--ember); }
 .track--thin   .layer--fill { color: var(--jade); }
@@ -450,7 +472,7 @@ a { color: inherit; }
   border-radius: 1px;
   vertical-align: -1px;
 }
-.key--fill { background: var(--accent); }
+.key--fill { background: var(--phase); }
 .key--gap  { background: var(--ember); opacity: 0.55; }
 .key--rest { background: var(--rule); }
 
