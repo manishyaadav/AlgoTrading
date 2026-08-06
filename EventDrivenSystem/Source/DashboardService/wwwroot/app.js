@@ -557,6 +557,44 @@ function computePhase() {
 
 function applyPhase() {
   document.documentElement.setAttribute("data-phase", computePhase());
+  renderHeaderStatus();
+}
+
+// Header status pill (visible on every page, between the mark and the clock).
+// Same lastCountry/lastExchanges computePhase() already has — no extra request.
+function renderHeaderStatus() {
+  const textEl = document.getElementById("header-status-text");
+  const pillEl = document.getElementById("header-status");
+  if (!textEl || !pillEl) return;
+
+  let text, title;
+  const c = lastCountry;
+
+  if (!c || !c.found) {
+    text = "Not gated yet";
+    title = "country-live hasn't run since this stack started";
+  } else if (!c.isToday) {
+    text = `${c.state} · stale`;
+    title = `Country state last set ${c.date}, not today`;
+  } else if (c.state !== "Normal") {
+    text = c.state;
+    title = c.holiday ? `${c.holiday.reason} (${c.holiday.date})` : `${c.state} — no session today`;
+  } else {
+    const ex = lastExchanges.find(e => /nse/i.test(e.exchangeName)) || lastExchanges[0];
+    if (!ex) {
+      text = "Normal · no exchange data";
+      title = "No exchange has reported yet";
+    } else if (!ex.isToday) {
+      text = `${ex.exchangeName} · not run today`;
+      title = `Last known state: ${stageLabelFor(ex.state)} (${ex.date || "—"})`;
+    } else {
+      text = `${ex.exchangeName} · ${stageLabelFor(ex.state)}`;
+      title = `Updated ${clockTime(ex.updatedOn)}`;
+    }
+  }
+
+  textEl.textContent = text;
+  pillEl.title = title;
 }
 
 // --- Data page: ingestion + aggregation candle-count status, per contract ---

@@ -223,6 +223,31 @@ header {
 .stamp__time { color: var(--text); }
 .stamp__zone { font-size: 10px; letter-spacing: 0.14em; }
 
+/* Country/exchange status, visible on every page — the header-level answer to
+   "is the market open right now" without navigating to Exchanges. Sits between
+   the mark and the clock. Dot rides --phase, the same token driving the page
+   wash and the mark glyph, so it never disagrees with the rest of the chrome;
+   text comes from renderHeaderStatus() in app.js off the same country/exchange
+   payloads refresh() already polls every cycle on every page — no extra request. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.status-pill__dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--phase);
+  transition: background var(--motion-standard);
+}
+
 .bar__link {
   text-decoration: none;
   color: var(--muted);
