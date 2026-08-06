@@ -37,7 +37,7 @@ Realigned to `wwwroot/home.css` so the console and the dashboard read as one app
 **`*-bg` tints are 0.15 alpha in dark, 0.08 in light.** Pills and badges put text on a tint of
 its own hue, which costs ~0.5 of a contrast ratio; at 10px that's the difference between passing
 and failing AA. Always re-measure a tinted chip **composited over its surface**, never the raw
-token against the surface — see `pages/freshness-and-strategy.md`.
+token against the surface — see `pages/strategy.md`.
 | Line | `#35435c` | `#b9c2d4` | `--line` | Connection graph edges |
 
 ### Two accents: `--phase` and `--accent`

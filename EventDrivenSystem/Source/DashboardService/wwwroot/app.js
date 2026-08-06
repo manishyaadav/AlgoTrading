@@ -25,7 +25,6 @@ const ICONS = {
   gauge: `<path d="M12 12l4-3"/><circle cx="12" cy="12" r="9"/><path d="M7 15a6 6 0 0 1 10 0"/>`, // Dashboard
   bolt: `<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"/>`,  // Function apps (dataingestion/holiday/ohlc/country/exchange/aggregation/notification)
   graph: `<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8 7l7-1M8.5 8l3 8M15.5 8l-3 8"/>`,
-  freshness: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>`,
   sun: `<circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.5 12h-3M22.5 12h-3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>`,
   moon: `<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>`,
   columns: `<rect x="3" y="4" width="6" height="16" rx="1"/><rect x="9.5" y="4" width="6" height="16" rx="1"/><rect x="16" y="4" width="5" height="16" rx="1"/>`,
@@ -173,15 +172,6 @@ document.getElementById("orientation-toggle").addEventListener("click", () => {
 });
 
 renderOrientationToggle();
-
-function formatAge(seconds) {
-  if (seconds === null || seconds === undefined) return "—";
-  if (seconds < 0) seconds = 0;
-  if (seconds < 60) return `${Math.round(seconds)}s ago`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
-  return `${Math.round(seconds / 86400)}d ago`;
-}
 
 function stateClass(state) {
   if (state === "running") return "running";
@@ -427,60 +417,6 @@ function drawConnections(services) {
 // Redis writes these as IST-local strings with no zone suffix, so `new Date()`
 // would re-read them in the viewer's timezone and shift every row. Slice the
 // parts out instead — same reasoning as clockTime() on the Data page.
-function stampTime(iso) {
-  if (!iso) return "—";
-  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
-  return m ? `${m[3]}/${m[2]} ${m[4]}` : String(iso);
-}
-
-// The backend calls a key stale once its age passes 2x its own timeframe, so a
-// 1-min key and a 60-min key are held to different clocks. The bar shows age
-// against that key's own threshold, which is the only comparison that means
-// anything across a mixed table.
-function ageCellHtml(i) {
-  const label = esc(formatAge(i.ageSeconds));
-  const minutes = Number.parseInt(i.timeframe, 10);
-  const thresholdSeconds = (Number.isFinite(minutes) && minutes > 0 ? minutes : 1) * 60 * 2;
-
-  if (i.ageSeconds === null || i.ageSeconds === undefined) return label;
-
-  const pct = Math.max(0, Math.min(100, (i.ageSeconds / thresholdSeconds) * 100));
-  return `
-    <span class="age">
-      <span class="age-label">${label}</span>
-      <span class="age-rail" style="--pct:${pct}%" role="img"
-            aria-label="${Math.round(pct)}% of the ${Math.round(thresholdSeconds / 60)} minute stale threshold"></span>
-    </span>`;
-}
-
-async function loadFreshness() {
-  const tbody = document.querySelector("#freshness tbody");
-  try {
-    const res = await fetch("/api/freshness");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = await res.json();
-
-    if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="7">No cached data yet — nothing has flowed through the pipeline.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = items.map(i => `
-      <tr class="${i.isStale ? "row-stale" : ""}">
-        <td>${esc(i.category)}</td>
-        <td class="cell-key">${esc(i.ticker ?? "—")}</td>
-        <td>${esc(i.dataType ?? "—")}</td>
-        <td class="num">${esc(i.timeframe ?? "—")}</td>
-        <td class="num">${esc(stampTime(i.updatedOn))}</td>
-        <td class="num">${ageCellHtml(i)}</td>
-        <td><span class="pill ${i.isStale ? "stale" : "fresh"}">${i.isStale ? "Stale" : "Fresh"}</span></td>
-      </tr>
-    `).join("");
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error">Unable to load freshness data: ${err.message}</td></tr>`;
-  }
-}
-
 // --- Exchanges page: country gate + exchange session timeline ---
 
 const EXCHANGE_STAGES = [
@@ -714,7 +650,6 @@ function loadAggregationStatus() {
 async function refresh() {
   await Promise.all([
     loadServices(),
-    loadFreshness(),
     loadCountryStatus(),
     loadExchangeTimelines(),
     loadIngestionStatus(),

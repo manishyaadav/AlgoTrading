@@ -532,37 +532,6 @@ th {
 tbody tr { transition: background var(--motion-fast); }
 tbody tr:hover { background: var(--panel); }
 
-/* --- Data Freshness --- */
-
-.cell-key { color: var(--text); }
-
-/* A stale row is called out by the pill; the tint is a scanning aid on top of
-   it, never the only signal. */
-.row-stale .cell-key { color: var(--red); }
-
-.age { display: inline-flex; align-items: center; gap: 8px; }
-.age-label { min-width: 58px; }
-
-/* Age against this key's own stale threshold — the session rail's idea at row
-   scale, so a key drifting toward stale is visible before it tips over. */
-.age-rail {
-  position: relative;
-  width: 46px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--border);
-  overflow: hidden;
-}
-.age-rail::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--pct, 0%);
-  background: var(--green);
-  transition: width var(--motion-standard), background var(--motion-standard);
-}
-.row-stale .age-rail::after { background: var(--red); }
-
 /* Monospace, tabular-figure styling for live-updating numeric/timestamp columns —
    prevents column width jitter as digit counts change. Opt-in via .num. */
 .num { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
@@ -570,16 +539,12 @@ tbody tr:hover { background: var(--panel); }
 /* Utility face — same monospace treatment home.css gives every number, label
    and eyebrow (table headers, small-caps labels, badges/pills, stat text). */
 th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
-.timeline-time, .pill, .badge, .storage-pill, .exchange-row-meta,
+.timeline-time, .badge, .storage-pill, .exchange-row-meta,
 .candle-count, .candle-tf, .rail-axis,
 .rule-row-title, .operand-label, .view-label, .form-field label {
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
-
-.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 500; letter-spacing: 0.08em; }
-.pill.fresh { background: var(--green-bg); color: var(--green); }
-.pill.stale { background: var(--red-bg); color: var(--red); }
 
 .error { color: var(--red); font-size: 13px; margin-bottom: 12px; }
 

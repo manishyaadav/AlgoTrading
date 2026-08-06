@@ -67,7 +67,6 @@ const LOGOS = {
 // pretending to have a number.
 const ROUTES = [
   { page: "services", name: "Services & Connections", icon: "graph", live: true },
-  { page: "freshness", name: "Data Freshness", icon: "freshness", live: true },
   { page: "exchanges", name: "Exchanges", icon: "building", live: true },
   { page: "data", name: "Data", icon: "stack", live: true },
   { page: "strategy", name: "Strategy", icon: "target", live: true },
@@ -505,11 +504,6 @@ function renderRoutes(state, svc) {
     services: svc.known
       ? { text: `<b>${svc.up}</b> of ${svc.total} running`, tone: svc.down ? "warn" : "ok" }
       : { text: "Docker unreachable", tone: "warn" },
-
-    freshness: statFor(state.freshness, (f) => {
-      const stale = f.filter((x) => x.isStale).length;
-      return { text: `<b>${stale}</b> stale of ${f.length} keys`, tone: stale ? "warn" : "ok" };
-    }),
 
     exchanges: statFor(state.exchanges, (e) => {
       const ex = primaryExchange(e);

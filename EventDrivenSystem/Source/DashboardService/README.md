@@ -6,14 +6,13 @@ Open **http://localhost:8099** to view it.
 
 ## Navigation
 
-A left sidebar (collapses to a horizontal icon bar below 700px) lists 9 pages, switched client-side via URL hash (`#services`, `#freshness`, `#exchanges`, `#data`, `#strategy`, `#datasync`, `#backtest`, `#broker`, `#alerts`) — no page reload, and the current page is bookmarkable/shareable as a link.
+A left sidebar (collapses to a horizontal icon bar below 700px) lists 8 pages, switched client-side via URL hash (`#services`, `#exchanges`, `#data`, `#strategy`, `#datasync`, `#backtest`, `#broker`, `#alerts`) — no page reload, and the current page is bookmarkable/shareable as a link.
 
 | Page | Status |
 |---|---|
 | Services & Connections | Live |
-| Data Freshness | Live |
 | Exchanges | Live — country/exchange session status from Redis |
-| Data | Live — ingestion/aggregation candle-count status per contract |
+| Data | Live — ingestion (1-min) and aggregation (5/10/15/30/60/75-min) candle-count status per contract |
 | Strategy | Live — list/view/edit/delete strategies via `strategy-live`'s API |
 | Data Sync | Placeholder |
 | Backtest | Placeholder |
@@ -32,7 +31,7 @@ Two new backend endpoints (`GET /api/country`, `GET /api/exchanges`) read the `I
 
 ### Data page
 
-Two endpoints — `GET /api/data-ingestion` (1-min) and `GET /api/aggregation` (currently 5-min only — see below) — each return one status entry per contract, discovered dynamically from whatever `DataIngestion:*` / `Aggregation:OHLC:*:5:Min` keys actually exist in Redis. **Nothing is hardcoded to a fixed ticker list** — a new contract shows up here automatically the moment it starts flowing through the pipeline, no dashboard code change needed.
+Two endpoints — `GET /api/data-ingestion` (1-min) and `GET /api/aggregation` (5/10/15/30/60/75-min) — each return one status entry per contract/timeframe, discovered dynamically from whatever `DataIngestion:*` / `Aggregation:OHLC:*:{tf}:Min` keys actually exist in Redis. **Nothing is hardcoded to a fixed ticker list** — a new contract shows up here automatically the moment it starts flowing through the pipeline, no dashboard code change needed.
 
 The **data provider** (`TradingView` today) is discovered the same way, not hardcoded either — `/api/data-ingestion` scans the broad `DataIngestion:*` pattern and pulls both the provider and the ticker out of the key (`DataIngestion:{Provider}:{Ticker}`) via `DiscoverProviderTickers` in `Program.cs`. A future provider (Zerodha, Kite, NSE direct, ...) shows up here automatically the moment it starts writing to Redis under its own provider segment — see [NotificationService/README.md](../NotificationService/README.md#data-provider-is-discovered-not-hardcoded) for the producer/consumer side of this. Aggregation has no provider concept — its Redis keys never carried one — so `provider` is `null` on every `/api/aggregation` entry and the ingestion cards are the only ones that show a **Provider** line.
 
@@ -41,9 +40,9 @@ For each contract/timeframe, a card shows:
 - A status badge — **not** just raw count vs. total, since a session isn't over until 3:30. It's count vs. *how many should have landed by now*, computed server-side from elapsed time since 9:15: **Pending** (before market open, nothing to be behind on yet), **On Track** (≥90% of expected-so-far), **Behind** (50-89%), **Behind / No Data** (<50%, including no data at all today).
 - Two storage indicators — **Redis** (green if the count SET has any members) and **Azurite** (green only if `ohlc-live` actually has a blob for today's date for that contract). During live market hours this is **expected to show red** — the Azurite blob upload is a manual, after-hours process today (see the root README's data-preparation discussion), not a bug in this indicator.
 
-**Aggregation is grouped into two sub-sections**: **Timeframes** (the card grid above) and **Indicators** (a placeholder — nothing computes Supertrend/EMA/Pivot Central Range yet, this is just marking where that will eventually surface).
+**Aggregation is grouped into two sub-sections**: **Timeframes** (the card grid above, one card per contract × configured timeframe — `int[] timeframes` in `Program.cs`'s `/api/aggregation` handler) and **Indicators** (a placeholder — nothing computes Supertrend/EMA/Pivot Central Range yet, this is just marking where that will eventually surface).
 
-Currently wired for **1-min ingestion and 5-min aggregation only**, per explicit scope — extending to 10/15/30/60/75-min aggregation is one line each (`int[] timeframes = { 5 };` in `Program.cs`'s `/api/aggregation` handler), no other code changes needed since the whole pipeline (counting, discovery, status computation, card rendering) is timeframe-generic already.
+Ingestion is 1-min only (that's what the pipeline ingests). Aggregation covers every configured timeframe (5/10/15/30/60/75-min) in one flat card grid, sorted by timeframe then contract — no further grouping needed since the whole pipeline (counting, discovery, status computation, card rendering) was already timeframe-generic; the array of timeframes was the only thing scoping it down.
 
 ### Strategy page
 
@@ -66,7 +65,7 @@ Saving always re-fetches the grid from the server rather than trusting local sta
 - **Services & Connections** — every container in the `live` compose project (queried live from the Docker Engine API), with running/stopped state, port mappings, a small icon per service kind (Kafka/Zookeeper/Kafdrop, Redis, Azurite, SignalR, Dashboard, or a generic bolt icon for the Function-app services), and arrows drawn between cards showing `depends_on` relationships. The arrows are computed from Docker's own `com.docker.compose.depends_on` container label at request time — not hand-drawn — so they can't silently drift out of sync with `docker-compose-live.yml` the way a static diagram would.
 
   Services are grouped into three bordered, color-accented panels — **Infrastructure** (blue), **Helpers** (amber), **Core Services** (violet) — via a hand-maintained `CATEGORIES` map in `wwwroot/app.js` (Docker has no concept of this grouping, so unlike the dependency arrows it can't be derived automatically — **update that map when you add a new service to compose, or it'll silently fall into "Core Services" by default**). The panel row can be toggled horizontal/vertical via the button next to the section heading (saved in `localStorage`); on screens narrower than 700px it always stacks vertically regardless of that preference, since three columns don't fit a phone screen.
-- **Data Freshness** — every string key in `redis-live`, parsed generically (no hardcoded ticker/timeframe list) and grouped by the prefix before the first `:` in the key (`DataIngestion`, `DataFeed`, `Aggregation`, …). Shows last-updated time, age, and a stale/fresh pill. "Stale" means no update in more than 2× the entry's timeframe — outside market hours everything will show stale, which is expected, not a fault.
+- **`/api/freshness`** (no longer a dedicated dashboard page — its ingestion/aggregation content overlapped the Data page too closely, so it was dropped from the sidebar in favor of Data) scans every string key in `redis-live` generically (no hardcoded ticker/timeframe list), grouped by the prefix before the first `:` in the key (`DataIngestion`, `DataFeed`, `Aggregation`, …), and flags each as stale once its age passes 2× its own timeframe. The endpoint itself is still live — it feeds the console's **Cache Freshness** widget on `home.html`.
 
 Kafka topic-level detail isn't duplicated here — click **Kafdrop ↗** in the header for that.
 
@@ -74,7 +73,7 @@ The sun/moon button in the header toggles dark/light mode; the choice is saved i
 
 ## Host-timezone-independent timestamps
 
-Every "today"/staleness/session-time calculation (Data Freshness age, Country/Exchange `IsToday`, the Data page's per-contract expected-so-far count) goes through a local `IstNow()` helper in `Program.cs` — `TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, "India Standard Time")` — instead of `DateTime.Now`. `DateTime.Now` only happens to return IST today because this container's `TZ=Asia/Kolkata` env var is set; on a host where that's not true (a different machine, or a future cloud platform that resets/ignores container `TZ`), every one of those calculations would silently start using the host's actual timezone instead, with nothing to signal the drift. `DateTime.UtcNow` is always correct regardless of host config, so converting explicitly from there removes the dependency entirely. Same fix applied in `NotificationService` (count-key dates) and `AggregationService` (bucket alignment) — see those services' READMEs.
+Every "today"/staleness/session-time calculation (`/api/freshness` age, Country/Exchange `IsToday`, the Data page's per-contract expected-so-far count) goes through a local `IstNow()` helper in `Program.cs` — `TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, "India Standard Time")` — instead of `DateTime.Now`. `DateTime.Now` only happens to return IST today because this container's `TZ=Asia/Kolkata` env var is set; on a host where that's not true (a different machine, or a future cloud platform that resets/ignores container `TZ`), every one of those calculations would silently start using the host's actual timezone instead, with nothing to signal the drift. `DateTime.UtcNow` is always correct regardless of host config, so converting explicitly from there removes the dependency entirely. Same fix applied in `NotificationService` (count-key dates) and `AggregationService` (bucket alignment) — see those services' READMEs.
 
 ## How it talks to Docker
 
