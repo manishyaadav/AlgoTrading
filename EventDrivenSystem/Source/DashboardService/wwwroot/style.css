@@ -1,64 +1,109 @@
 :root {
-  /* dark theme (default) */
-  --bg: #0f1115;
-  --panel: #171a21;
-  --border: #2a2e38;
-  --text: #e6e8ec;
-  --muted: #8a8f9c;
-  --green: #3ecf8e;
-  --green-bg: rgba(62,207,142,0.15);
-  --red: #ef5568;
-  --red-bg: rgba(239,85,104,0.15);
-  --yellow: #e5b93f;
-  --line: #4a5164;
-  font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  /* dark theme (default) — palette matches wwwroot/home.css so the console
+     and the dashboard read as one app, not two */
+  --bg: #080b12;
+  --panel: #0e1320;
+  --panel-2: #141b2b;   /* hover/raised surface, home's --ink-3 */
+  --border: #1e2839;
+  --text: #e9eef7;
+  --muted: #78859c;
+  --accent: #7c89ff;    /* home's --indigo — brand/interactive, not a status color */
+  --accent-bg: rgba(124,137,255,0.15);
+  --green: #38d9a4;     /* home's --jade — status: running/fresh/healthy only */
+  --green-bg: rgba(56,217,164,0.15);
+  --red: #ff5c72;       /* home's --ember — status: down/stale/behind */
+  --red-bg: rgba(255,92,114,0.15);
+  --yellow: #ffb44a;    /* home's --saffron — status: caution/in-between */
+  --yellow-bg: rgba(255,180,74,0.15);
+  --line: #35435c;
+  font-family: "Inter Tight", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+
+  /* spacing scale — formalizes the app's existing 8/12/14/16/24/32px rhythm */
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* shadow depths — subtle, used sparingly (app is border-driven, not elevation-driven) */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.12);
+  --shadow-md: 0 4px 10px rgba(0,0,0,0.18);
+  --shadow-lg: 0 10px 24px rgba(0,0,0,0.24);
+
+  /* motion timing tokens */
+  --motion-fast: 150ms ease;
+  --motion-standard: 200ms ease;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --bg: #f5f6f8;
+    --bg: #f1f4f9;
     --panel: #ffffff;
-    --border: #e1e4ea;
-    --text: #1a1d24;
-    --muted: #6b7280;
-    --green: #0e9f6e;
-    --green-bg: rgba(14,159,110,0.12);
-    --red: #dc2626;
-    --red-bg: rgba(220,38,38,0.10);
-    --yellow: #d97706;
-    --line: #c3c8d4;
+    --panel-2: #e8edf5;
+    --border: #d2d9e6;
+    --text: #101725;
+    --muted: #566275;
+    --accent: #4149cf;
+    --accent-bg: rgba(65,73,207,0.08);
+    --green: #087550;
+    --green-bg: rgba(8,117,80,0.08);
+    /* darker than the dark-theme red: pills and badges tint the background with
+       the same hue as their text, which eats contrast at 10px. See below. */
+    --red: #c62038;
+    --red-bg: rgba(198,32,56,0.08);
+    --yellow: #9a5906;
+    --yellow-bg: rgba(154,89,6,0.08);
+    --line: #b9c2d4;
   }
 }
 
 :root[data-theme="light"] {
-  --bg: #f5f6f8;
+  --bg: #f1f4f9;
   --panel: #ffffff;
-  --border: #e1e4ea;
-  --text: #1a1d24;
-  --muted: #6b7280;
-  --green: #0e9f6e;
-  --green-bg: rgba(14,159,110,0.12);
-  --red: #dc2626;
-  --red-bg: rgba(220,38,38,0.10);
-  --yellow: #d97706;
-  --line: #c3c8d4;
+  --panel-2: #e8edf5;
+  --border: #d2d9e6;
+  --text: #101725;
+  --muted: #566275;
+  --accent: #4149cf;
+  --accent-bg: rgba(65,73,207,0.08);
+  --green: #087550;
+  --green-bg: rgba(8,117,80,0.08);
+  /* Tints share the hue of the text sitting on them, which costs ~0.5 of a
+     contrast ratio at 10px — hence the darker red and the lighter tints here
+     than the dark theme needs. Measured: pill/badge floor 4.58 light. */
+  --red: #c62038;
+  --red-bg: rgba(198,32,56,0.08);
+  --yellow: #9a5906;
+  --yellow-bg: rgba(154,89,6,0.08);
+  --line: #b9c2d4;
 }
 
 :root[data-theme="dark"] {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --border: #2a2e38;
-  --text: #e6e8ec;
-  --muted: #8a8f9c;
-  --green: #3ecf8e;
-  --green-bg: rgba(62,207,142,0.15);
-  --red: #ef5568;
-  --red-bg: rgba(239,85,104,0.15);
-  --yellow: #e5b93f;
-  --line: #4a5164;
+  --bg: #080b12;
+  --panel: #0e1320;
+  --panel-2: #141b2b;
+  --border: #1e2839;
+  --text: #e9eef7;
+  --muted: #78859c;
+  --accent: #7c89ff;
+  --accent-bg: rgba(124,137,255,0.15);
+  --green: #38d9a4;
+  --green-bg: rgba(56,217,164,0.15);
+  --red: #ff5c72;
+  --red-bg: rgba(255,92,114,0.15);
+  --yellow: #ffb44a;
+  --yellow-bg: rgba(255,180,74,0.15);
+  --line: #35435c;
 }
 
 * { box-sizing: border-box; }
+
+:where(a, button, input, select):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 
 body {
   margin: 0;
@@ -67,18 +112,66 @@ body {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+/* Top bar — matches home.html's .bar so the console and the dashboard read
+   as one app. A subtle accent wash near the mark stands in for home's
+   full-page phase wash; the dashboard has no session-phase concept of its
+   own, so --accent stays the fixed brand indigo rather than shifting live. */
 header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
+  background:
+    radial-gradient(60% 220% at 12% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 70%),
+    var(--bg);
 }
 
-header h1 { font-size: 18px; margin: 0; }
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+  color: var(--text);
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 112, "wght" 750;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.mark__glyph {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
-.header-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--muted); }
-.header-right a { color: var(--muted); }
+.header-right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--muted); }
+
+.stamp {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.stamp__time { color: var(--text); }
+.stamp__zone { font-size: 10px; letter-spacing: 0.14em; }
+
+.bar__link {
+  text-decoration: none;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 2px;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+.bar__link:hover { color: var(--text); border-color: var(--accent); }
 
 .icon-btn {
   display: inline-flex;
@@ -89,11 +182,12 @@ header h1 { font-size: 18px; margin: 0; }
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--panel);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
 }
-.icon-btn:hover { color: var(--text); border-color: var(--muted); }
+.icon-btn:hover { color: var(--text); border-color: var(--accent); }
 
 .app-body { display: flex; align-items: flex-start; }
 
@@ -125,8 +219,8 @@ header h1 { font-size: 18px; margin: 0; }
   text-align: left;
   cursor: pointer;
 }
-.nav-item:hover { background: var(--panel); color: var(--text); }
-.nav-item.active { background: var(--green-bg); color: var(--green); font-weight: 600; }
+.nav-item:hover { background: var(--panel-2); color: var(--text); }
+.nav-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .nav-icon { display: inline-flex; flex-shrink: 0; }
 .nav-icon .icon { width: 18px; height: 18px; }
 
@@ -171,7 +265,19 @@ section { margin-bottom: 32px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .section-head h2 { margin-bottom: 0; }
 
-h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+/* Section headings read as home's "eyebrow" labels — same monospace utility
+   face used there for every number/label/eyebrow on the page. */
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
 
 .hint { font-size: 12px; color: var(--muted); margin-top: -4px; margin-bottom: 12px; }
 
@@ -193,6 +299,17 @@ h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; text-transfo
   stroke: var(--line);
   stroke-width: 1.5;
   opacity: 0.7;
+  transition: stroke var(--motion-fast), stroke-width var(--motion-fast), opacity var(--motion-fast);
+}
+
+/* Focusing one service: its own depends_on edges light up in the accent and
+   everything else recedes, so the subgraph around a container is readable
+   without a legend. Driven by real depends_on data, not a hand-drawn map. */
+.graph-wrapper.is-focusing .connection { opacity: 0.1; }
+.graph-wrapper.is-focusing .connection.is-lit {
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 1;
 }
 
 .category-row {
@@ -212,69 +329,202 @@ h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; text-transfo
   .category-row[data-orientation="horizontal"] { flex-direction: column; }
 }
 
+/* The panel's top rule reports the group's health rather than giving it an
+   arbitrary identity colour — structure carrying information, and it drops the
+   three raw hex values the old --cat-color scheme needed. */
 .category-panel {
   flex: 1 1 0;
   min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-top: 3px solid var(--cat-color);
+  border-top: 2px solid var(--border);
   border-radius: 10px;
   padding: 14px;
 }
+.category-panel[data-health="ok"]   { border-top-color: var(--green); }
+.category-panel[data-health="down"] { border-top-color: var(--red); }
 
 .category-header {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
-  font-weight: 600;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
   font-size: 13px;
+  letter-spacing: -0.005em;
 }
 
-.category-icon { width: 20px; height: 20px; color: var(--cat-color); }
+.category-icon { width: 18px; height: 18px; color: var(--muted); }
 
 .category-count {
   margin-left: auto;
   font-size: 11px;
-  font-weight: 600;
   color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 8px;
+  letter-spacing: 0.04em;
 }
+.category-panel[data-health="ok"]   .category-count b { color: var(--green); font-weight: 500; }
+.category-panel[data-health="down"] .category-count b { color: var(--red); font-weight: 500; }
 
 .empty { font-size: 12px; color: var(--muted); }
 
 .cards-mini {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: 8px;
 }
 
 .card {
   position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 14px;
+  cursor: default;
+  transition: border-color var(--motion-fast), background var(--motion-fast),
+              transform var(--motion-fast), opacity var(--motion-fast);
 }
 
-.card .name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; color: var(--text); }
-.card .name .icon { color: var(--green); }
-.card .status-line { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+/* Hover/focus lift, matching the console's route cards. */
+.card:hover,
+.card:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: var(--panel-2);
+  transform: translateY(-2px);
+}
+/* The cards are divs, so the global focus-visible rule (a/button/input/select)
+   doesn't reach them — give keyboard users the same ring it provides. */
+.card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+/* Companion states to the edge highlight above: neighbours in the dependency
+   graph stay lit, everything unrelated recedes. */
+.cards-mini .card.is-related {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--panel-2);
+}
+.category-row.is-focusing .card:not(.is-focused):not(.is-related) { opacity: 0.4; }
+
+.card .name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 106, "wght" 620;
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+.card .name .icon { color: var(--accent); width: 15px; height: 15px; }
+
+.card .status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+}
+
+/* Only shown while a card is focused — the counts behind the lit edges. */
+.card .links {
+  margin-top: 6px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+.card.is-focused .links { opacity: 1; }
+
+/* Ports and links are always in the markup so the card's height is fixed —
+   otherwise revealing them on hover would reflow the grid and desync the
+   arrows, which are drawn from measured card positions. Drop the rows that
+   have nothing to say so they don't leave dead space. */
+.card .status-line:empty,
+.card .links:empty { display: none; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .dot.running { background: var(--green); }
 .dot.exited, .dot.dead { background: var(--red); }
 .dot.other { background: var(--yellow); }
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+@media (prefers-reduced-motion: reduce) {
+  .card:hover, .card:focus-visible { transform: none; }
+}
 
-.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+
+/* Column heads are eyebrows, same as every other label in the system. */
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  padding-bottom: 10px;
+}
+
+tbody tr { transition: background var(--motion-fast); }
+tbody tr:hover { background: var(--panel); }
+
+/* --- Data Freshness --- */
+
+.cell-key { color: var(--text); }
+
+/* A stale row is called out by the pill; the tint is a scanning aid on top of
+   it, never the only signal. */
+.row-stale .cell-key { color: var(--red); }
+
+.age { display: inline-flex; align-items: center; gap: 8px; }
+.age-label { min-width: 58px; }
+
+/* Age against this key's own stale threshold — the session rail's idea at row
+   scale, so a key drifting toward stale is visible before it tips over. */
+.age-rail {
+  position: relative;
+  width: 46px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.age-rail::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--pct, 0%);
+  background: var(--green);
+  transition: width var(--motion-standard), background var(--motion-standard);
+}
+.row-stale .age-rail::after { background: var(--red); }
+
+/* Monospace, tabular-figure styling for live-updating numeric/timestamp columns —
+   prevents column width jitter as digit counts change. Opt-in via .num. */
+.num { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+/* Utility face — same monospace treatment home.css gives every number, label
+   and eyebrow (table headers, small-caps labels, badges/pills, stat text). */
+th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
+.timeline-time, .pill, .badge, .storage-pill, .exchange-row-meta,
+.candle-count, .candle-tf, .rail-axis,
+.rule-row-title, .operand-label, .view-label, .form-field label {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 500; letter-spacing: 0.08em; }
 .pill.fresh { background: var(--green-bg); color: var(--green); }
 .pill.stale { background: var(--red-bg); color: var(--red); }
 
@@ -293,40 +543,63 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   font-weight: 600;
   cursor: pointer;
 }
-.btn:hover { border-color: var(--muted); }
-.btn-primary { background: var(--green-bg); color: var(--green); border-color: transparent; }
+.btn { transition: border-color var(--motion-fast); }
+.btn:hover { border-color: var(--accent); }
+.btn-primary { background: var(--accent-bg); color: var(--accent); border-color: transparent; }
 .btn-danger { background: var(--red-bg); color: var(--red); border-color: transparent; }
 
-/* --- Strategy grid (data table) --- */
+/* --- Strategy list ------------------------------------------------------
+   Stacked rows rather than the 10-column table this replaced, which needed
+   900px and a horizontal scrollbar to show columns that were mostly empty.
+   Same row shape as the Data page's contracts. */
 
 .strategy-grid { margin-bottom: 20px; }
 
-.table-scroll { overflow-x: auto; }
+.strategy-rows { display: flex; flex-direction: column; gap: 10px; }
 
-.strategy-table {
-  width: 100%;
-  min-width: 900px;
-  border-collapse: collapse;
-  font-size: 12.5px;
+.strategy-row {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: border-color var(--motion-fast);
 }
-.strategy-table th, .strategy-table td {
-  text-align: left;
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-  white-space: normal;
+.strategy-row:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+
+.strategy-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
 }
-.strategy-table th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-.strategy-table .strategy-name-cell { font-weight: 600; color: var(--text); }
-.strategy-table .strategy-actions-cell { white-space: nowrap; }
-.strategy-table .strategy-actions-cell .btn { padding: 4px 9px; font-size: 11px; margin-right: 4px; }
+
+.strategy-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+
+.strategy-row-name {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+}
+
+.strategy-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.strategy-row-actions .btn { padding: 4px 10px; font-size: 11px; }
+
+.strategy-row-meta {
+  margin-top: 8px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
 
 .badge {
   display: inline-block;
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--muted);
@@ -351,7 +624,13 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
-.strategy-panel-head h3 { margin: 0; font-size: 16px; }
+.strategy-panel-head h3 {
+  margin: 0;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 110, "wght" 700;
+  font-size: 17px;
+  letter-spacing: -0.015em;
+}
 .strategy-panel-actions { display: flex; gap: 8px; }
 
 .form-grid {
@@ -366,7 +645,7 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
 
 .form-field { display: flex; flex-direction: column; gap: 5px; }
 .form-field.span-2 { grid-column: 1 / -1; }
-.form-field label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+.form-field label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); font-weight: 500; }
 
 .form-field input[type="text"],
 .form-field select {
@@ -395,7 +674,7 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   padding: 5px 10px;
   cursor: pointer;
 }
-.checkbox-group input { accent-color: var(--green); }
+.checkbox-group input { accent-color: var(--accent); }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
@@ -409,16 +688,20 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
 }
 
 .view-field { margin-bottom: 12px; }
-.view-field .view-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+.view-field .view-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); font-weight: 500; margin-bottom: 5px; }
 .view-field .view-value { font-size: 13px; }
 
 /* --- Rule builder (TradingRule[]) --- */
 
+/* Group labels read as the console's eyebrows — the hairline above does the
+   separating, so the text itself can stay quiet. */
 .rules-group-label {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text);
-  margin: 20px 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 22px 0 10px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
@@ -447,7 +730,7 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.rule-row-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+.rule-row-title { font-size: 10px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .rule-row-head .btn { padding: 3px 9px; font-size: 11px; }
 
 .rule-row-grid {
@@ -522,7 +805,13 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   margin-bottom: 14px;
 }
 
-.exchange-row-name { font-weight: 600; font-size: 14px; margin-bottom: 14px; }
+.exchange-row-name {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  margin-bottom: 16px;
+}
 
 .timeline {
   display: flex;
@@ -539,21 +828,35 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
   width: 90px;
 }
 
+/* Diamond markers, matching the console's .gate row — this page is the detailed
+   view of the same five timers, so it uses the same vocabulary rather than a
+   second metaphor. Three states, not two: the stage we're at now reads
+   differently from the ones already behind us. */
 .timeline-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  background: var(--bg);
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  transform: rotate(45deg);
+  margin: 3px 0;
   flex-shrink: 0;
+  transition: background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast);
 }
-.timeline-stage.done .timeline-dot { background: var(--green); border-color: var(--green); box-shadow: 0 0 0 3px var(--green-bg); }
+.timeline-stage.done .timeline-dot {
+  background: var(--green);
+  border-color: var(--green);
+}
+.timeline-stage.current .timeline-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-bg);
+}
 
 .timeline-connector {
   flex: 1 1 0;
-  height: 2px;
+  height: 1px;
   background: var(--border);
-  margin-top: 7px;
+  margin-top: 9px;
   min-width: 20px;
 }
 .timeline-connector.done { background: var(--green); }
@@ -572,13 +875,174 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
 
 /* --- Data page: candle-count status cards --- */
 
-.sub-section-label { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 8px; }
+.sub-section-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 16px 0 8px;
+}
 
+/* Stacked full-width rows, not a grid of narrow cards. The rails carry one tick
+   per expected bar — 375 of them for the 1-min feed — which needs real width to
+   resolve, and stacking puts every contract on the same 09:15→15:30 axis so a
+   laggard is visible by comparison. This is the detailed view of the console's
+   session ribbon and deliberately uses the same object. */
 .candle-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 8px;
+}
+
+.candle-row {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.candle-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+}
+
+.candle-row-name {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 13.5px;
+  letter-spacing: -0.005em;
+}
+
+.candle-tf {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  vertical-align: 1px;
+}
+
+.candle-count { font-size: 11.5px; color: var(--muted); white-space: nowrap; margin-left: 10px; }
+.candle-count b { color: var(--text); font-weight: 500; }
+
+.candle-row-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.candle-row-meta {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--muted);
+}
+.candle-row-foot .storage-indicators { margin-top: 0; }
+
+/* --- Rail: the console's session-ribbon mechanics, shared -----------------
+   Three full-width tick layers, each clipped to its own share of the session.
+   Keeping every layer full width is what locks the tick period to the axis
+   instead of stretching it with the fill — don't reimplement by sizing the
+   fill element's width. */
+.rail {
+  position: relative;
+  height: 20px;
+  margin: 12px 0 6px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.rail-layer {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(90deg, currentColor 0 58%, transparent 58%);
+  background-size: calc(100% / var(--bars, 375)) 100%;
+  transition: clip-path var(--motion-standard), color var(--motion-standard);
+}
+.rail-layer.rest { color: var(--border); }
+.rail-layer.gap  { color: var(--red); opacity: 0.5; clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); }
+.rail-layer.fill { color: var(--green); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
+
+.rail[data-status="amber"]   .rail-layer.fill { color: var(--yellow); }
+.rail[data-status="red"]     .rail-layer.fill { color: var(--red); }
+.rail[data-status="pending"] .rail-layer.fill { color: var(--muted); }
+
+/* Where the session should have reached by now, per the backend's ExpectedSoFar. */
+.rail-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--exp, 0%);
+  width: 1px;
+  background: var(--text);
+  opacity: 0.6;
+  transition: left var(--motion-standard);
+}
+
+.rail-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.rail-axis b { color: var(--text); font-weight: 500; }
+
+/* Under ~760px the 375-tick period falls below a device pixel and turns to
+   mush — drop to a solid bar, which reads the same at a glance. */
+@media (max-width: 760px) {
+  .rail-layer { background-image: linear-gradient(90deg, currentColor 0 100%); }
+}
+
+/* --- Shared status card (country gate on Exchanges) --- */
+
+.status-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.status-card-name {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 15px;
+  letter-spacing: -0.005em;
+}
+
+.status-card-badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px; }
+
+.status-card-meta {
+  display: grid;
+  gap: 5px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--text);
+}
+/* Label/value as real columns rather than a run-on line, so the values line up
+   and a screen reader doesn't read "Date2026-08-06". */
+.status-card-meta > div {
+  display: grid;
+  grid-template-columns: minmax(0, 118px) 1fr;
+  gap: 4px 14px;
+}
+.status-card-meta b { color: var(--muted); font-weight: 400; }
+
+@media (max-width: 480px) {
+  .status-card-meta > div { grid-template-columns: 1fr; }
 }
 
 /* status-* covers both text (badge) and background (progress fill) use */
@@ -588,25 +1052,9 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
 .status-pending { color: var(--muted); }
 
 .badge.status-green { background: var(--green-bg); }
-.badge.status-amber { background: rgba(229,185,63,0.15); }
+.badge.status-amber { background: var(--yellow-bg); }
 .badge.status-red { background: var(--red-bg); }
 .badge.status-pending { background: var(--bg); border-color: var(--border); }
-
-.progress-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
-.progress-bar {
-  flex: 1 1 auto;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-.progress-fill { height: 100%; border-radius: 999px; }
-.progress-fill.status-green { background: var(--green); }
-.progress-fill.status-amber { background: var(--yellow); }
-.progress-fill.status-red { background: var(--red); }
-.progress-fill.status-pending { background: var(--muted); }
-.progress-count { flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 
 .storage-indicators { display: flex; gap: 8px; margin-top: 12px; }
 .storage-pill {

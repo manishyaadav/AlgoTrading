@@ -1,5 +1,21 @@
 const REFRESH_MS = 5000;
 
+// --- Live IST clock in the header (matches home.html's .stamp) ---
+const IST_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Kolkata",
+  weekday: "short", day: "2-digit", month: "short", year: "numeric",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+});
+
+function tickClock() {
+  const p = {};
+  for (const { type, value } of IST_FMT.formatToParts(new Date())) p[type] = value;
+  document.getElementById("stamp-date").textContent = `${p.weekday.toUpperCase()} ${p.day} ${p.month.toUpperCase()} ${p.year}`;
+  document.getElementById("stamp-time").textContent = `${p.hour}:${p.minute}:${p.second}`;
+}
+tickClock();
+setInterval(tickClock, 1000);
+
 // Small self-contained icon set (24x24 stroke icons) — no external requests, no icon font/library.
 const ICONS = {
   stream: `<path d="M4 6h16M4 12h16M4 18h10"/>`,                                   // Kafka / Zookeeper / Kafdrop
@@ -45,21 +61,18 @@ const CATEGORIES = [
     key: "infra",
     title: "Infrastructure",
     icon: "stack",
-    color: "#3b82f6",
     services: ["redis-live", "kafka-live", "zookeeper-live", "kafdrop-live", "azurite-live", "dashboard-live"],
   },
   {
     key: "helpers",
     title: "Helpers",
     icon: "wrench",
-    color: "#f59e0b",
     services: ["holiday-live", "ohlc-live", "signalr-live"],
   },
   {
     key: "core",
     title: "Core Services",
     icon: "chip",
-    color: "#8b5cf6",
     services: ["dataingestion", "country-live", "exchange-live", "aggregation-live", "notification-live"],
   },
 ];
@@ -178,17 +191,52 @@ function stateClass(state) {
 
 let lastServices = [];
 
-function serviceCard(s) {
+// How many other containers declare a depends_on pointing at this one.
+function dependentsOf(composeService, services) {
+  return services.filter(x => (x.dependsOn || []).includes(composeService)).length;
+}
+
+function linksLine(s, services) {
+  const deps = (s.dependsOn || []).length;
+  const dependents = dependentsOf(s.composeService, services);
+  if (!deps && !dependents) return "";
+  const parts = [];
+  if (deps) parts.push(`↓ ${deps} dep${deps === 1 ? "" : "s"}`);
+  if (dependents) parts.push(`↑ ${dependents} dependent${dependents === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
+function serviceCard(s, services) {
+  const links = linksLine(s, services);
   return `
-    <div class="card" id="card-${cssId(s.composeService)}" data-service="${s.composeService}">
+    <div class="card" id="card-${cssId(s.composeService)}" data-service="${s.composeService}" tabindex="0">
       <div class="name">${svgIcon(iconFor(s.composeService))}<span>${s.composeService || s.name}</span></div>
       <div class="status-line">
         <span class="dot ${stateClass(s.state)}"></span>
-        <span>${s.status}</span>
+        <span class="card-status">${s.status}</span>
       </div>
-      ${s.ports.length ? `<div class="status-line">${s.ports.join(", ")}</div>` : ""}
+      <div class="status-line card-ports">${s.ports.length ? s.ports.join(", ") : ""}</div>
+      <div class="links">${links}</div>
     </div>
   `;
+}
+
+// Refreshing every 5s must not throw the DOM away: rebuilding would cancel any
+// hover, drop keyboard focus, and kill the dependency highlight mid-inspection.
+// The panels are rebuilt only when the set of containers actually changes.
+function servicesSignature(services) {
+  return services.map(s => `${categoryFor(s.composeService).key}/${s.composeService}`).sort().join("|");
+}
+
+function updateServiceCard(s, services) {
+  const card = document.getElementById(`card-${cssId(s.composeService)}`);
+  if (!card) return;
+
+  const dot = card.querySelector(".dot");
+  dot.className = `dot ${stateClass(s.state)}`;
+  card.querySelector(".card-status").textContent = s.status;
+  card.querySelector(".card-ports").textContent = s.ports.length ? s.ports.join(", ") : "";
+  card.querySelector(".links").textContent = linksLine(s, services);
 }
 
 async function loadServices() {
@@ -200,34 +248,116 @@ async function loadServices() {
     lastServices = services;
 
     if (!services.length) {
+      el.dataset.signature = "";
       el.innerHTML = `<div class="error">No containers found for this compose project.</div>`;
       drawConnections([]);
       return;
     }
 
-    el.innerHTML = CATEGORIES.map(cat => {
+    const signature = servicesSignature(services);
+    const rebuilt = el.dataset.signature !== signature;
+
+    if (rebuilt) {
+      el.dataset.signature = signature;
+      el.innerHTML = CATEGORIES.map(cat => {
+        const items = services.filter(s => categoryFor(s.composeService).key === cat.key);
+        return `
+          <div class="category-panel" data-category="${cat.key}">
+            <div class="category-header">
+              ${svgIcon(cat.icon, "category-icon")}
+              <span>${cat.title}</span>
+              <span class="category-count"></span>
+            </div>
+            <div class="cards-mini">
+              ${items.length ? items.map(s => serviceCard(s, services)).join("") : `<div class="empty">No services</div>`}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    services.forEach(s => updateServiceCard(s, services));
+
+    // The panel's top rule and count report the group's health, so a container
+    // dropping out is visible without opening the group.
+    CATEGORIES.forEach(cat => {
+      const panel = el.querySelector(`.category-panel[data-category="${cat.key}"]`);
+      if (!panel) return;
       const items = services.filter(s => categoryFor(s.composeService).key === cat.key);
-      return `
-        <div class="category-panel" style="--cat-color:${cat.color}">
-          <div class="category-header">
-            ${svgIcon(cat.icon, "category-icon")}
-            <span>${cat.title}</span>
-            <span class="category-count">${items.length}</span>
-          </div>
-          <div class="cards-mini">
-            ${items.length ? items.map(serviceCard).join("") : `<div class="empty">No services</div>`}
-          </div>
-        </div>
-      `;
-    }).join("");
+      const up = items.filter(s => s.state === "running").length;
+      panel.dataset.health = items.length && up === items.length ? "ok" : "down";
+      panel.querySelector(".category-count").innerHTML = `<b>${up}</b>/${items.length} up`;
+    });
 
     // let the DOM settle before measuring positions
-    requestAnimationFrame(() => drawConnections(services));
+    if (rebuilt) requestAnimationFrame(() => drawConnections(services));
   } catch (err) {
+    el.dataset.signature = "";
     el.innerHTML = `<div class="error">Unable to load service status: ${err.message}</div>`;
     drawConnections([]);
   }
 }
+
+/* --- Dependency focus -----------------------------------------------------
+   Hovering or keyboard-focusing a service lights the depends_on edges touching
+   it and dims the rest, so the subgraph around one container is legible without
+   a legend. Everything here reads the same live Docker data the arrows do. */
+
+function relatedTo(composeService) {
+  const self = lastServices.find(s => s.composeService === composeService);
+  const related = new Set(self ? (self.dependsOn || []) : []);
+  lastServices.forEach(s => {
+    if ((s.dependsOn || []).includes(composeService)) related.add(s.composeService);
+  });
+  return related;
+}
+
+function focusService(composeService) {
+  const row = document.getElementById("services");
+  const related = relatedTo(composeService);
+
+  row.classList.add("is-focusing");
+  document.getElementById("services-graph").classList.add("is-focusing");
+
+  row.querySelectorAll(".card").forEach(card => {
+    const name = card.dataset.service;
+    card.classList.toggle("is-focused", name === composeService);
+    card.classList.toggle("is-related", related.has(name));
+  });
+
+  document.querySelectorAll("#connections .connection").forEach(line => {
+    line.classList.toggle("is-lit", line.dataset.from === composeService || line.dataset.to === composeService);
+  });
+}
+
+function clearServiceFocus() {
+  document.getElementById("services").classList.remove("is-focusing");
+  document.getElementById("services-graph").classList.remove("is-focusing");
+  document.querySelectorAll("#services .card").forEach(c => c.classList.remove("is-focused", "is-related"));
+  document.querySelectorAll("#connections .connection").forEach(l => l.classList.remove("is-lit"));
+}
+
+// Delegated, so the handlers survive a rebuild of the panels.
+(function wireServiceFocus() {
+  const row = document.getElementById("services");
+
+  row.addEventListener("mouseover", e => {
+    const card = e.target.closest(".card[data-service]");
+    if (card) focusService(card.dataset.service);
+    else if (!row.contains(document.activeElement)) clearServiceFocus();
+  });
+  row.addEventListener("mouseleave", () => {
+    if (!row.contains(document.activeElement)) clearServiceFocus();
+  });
+
+  row.addEventListener("focusin", e => {
+    const card = e.target.closest(".card[data-service]");
+    if (card) focusService(card.dataset.service);
+  });
+  row.addEventListener("focusout", e => {
+    if (!row.contains(e.relatedTarget)) clearServiceFocus();
+  });
+})();
 
 function cssId(name) {
   return (name || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -286,9 +416,41 @@ function drawConnections(services) {
       line.setAttribute("y2", y2);
       line.setAttribute("class", "connection");
       line.setAttribute("marker-end", "url(#arrow)");
+      // lets the dependency-focus highlight find the edges touching a service
+      line.dataset.from = s.composeService;
+      line.dataset.to = depName;
       svg.appendChild(line);
     });
   });
+}
+
+// Redis writes these as IST-local strings with no zone suffix, so `new Date()`
+// would re-read them in the viewer's timezone and shift every row. Slice the
+// parts out instead — same reasoning as clockTime() on the Data page.
+function stampTime(iso) {
+  if (!iso) return "—";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
+  return m ? `${m[3]}/${m[2]} ${m[4]}` : String(iso);
+}
+
+// The backend calls a key stale once its age passes 2x its own timeframe, so a
+// 1-min key and a 60-min key are held to different clocks. The bar shows age
+// against that key's own threshold, which is the only comparison that means
+// anything across a mixed table.
+function ageCellHtml(i) {
+  const label = esc(formatAge(i.ageSeconds));
+  const minutes = Number.parseInt(i.timeframe, 10);
+  const thresholdSeconds = (Number.isFinite(minutes) && minutes > 0 ? minutes : 1) * 60 * 2;
+
+  if (i.ageSeconds === null || i.ageSeconds === undefined) return label;
+
+  const pct = Math.max(0, Math.min(100, (i.ageSeconds / thresholdSeconds) * 100));
+  return `
+    <span class="age">
+      <span class="age-label">${label}</span>
+      <span class="age-rail" style="--pct:${pct}%" role="img"
+            aria-label="${Math.round(pct)}% of the ${Math.round(thresholdSeconds / 60)} minute stale threshold"></span>
+    </span>`;
 }
 
 async function loadFreshness() {
@@ -304,13 +466,13 @@ async function loadFreshness() {
     }
 
     tbody.innerHTML = items.map(i => `
-      <tr>
-        <td>${i.category}</td>
-        <td>${i.ticker ?? "—"}</td>
-        <td>${i.dataType ?? "—"}</td>
-        <td>${i.timeframe ?? "—"}</td>
-        <td>${i.updatedOn ? new Date(i.updatedOn).toLocaleString() : "—"}</td>
-        <td>${formatAge(i.ageSeconds)}</td>
+      <tr class="${i.isStale ? "row-stale" : ""}">
+        <td>${esc(i.category)}</td>
+        <td class="cell-key">${esc(i.ticker ?? "—")}</td>
+        <td>${esc(i.dataType ?? "—")}</td>
+        <td class="num">${esc(i.timeframe ?? "—")}</td>
+        <td class="num">${esc(stampTime(i.updatedOn))}</td>
+        <td class="num">${ageCellHtml(i)}</td>
         <td><span class="pill ${i.isStale ? "stale" : "fresh"}">${i.isStale ? "Stale" : "Fresh"}</span></td>
       </tr>
     `).join("");
@@ -329,6 +491,11 @@ const EXCHANGE_STAGES = [
   { key: "Closed", label: "Close", time: "15:30" },
 ];
 
+function stageLabelFor(key) {
+  const stage = EXCHANGE_STAGES.find(s => s.key === key);
+  return stage ? stage.label : (key || "unknown");
+}
+
 function countryStatusHtml(c) {
   if (!c.found) {
     return `<div class="hint">No country data in Redis yet — country-live hasn't run since this stack started.</div>`;
@@ -338,17 +505,17 @@ function countryStatusHtml(c) {
   const staleBadge = c.isToday ? "" : `<span class="badge badge-not-deployed">Stale — last run ${esc(c.date)}, not today</span>`;
 
   return `
-    <div class="strategy-card">
-      <div class="strategy-name">${esc(c.name)}</div>
-      <div class="strategy-badges">
+    <div class="status-card">
+      <div class="status-card-name">${esc(c.name)}</div>
+      <div class="status-card-badges">
         <span class="badge ${stateClass}">${esc(c.state)}</span>
         ${staleBadge}
       </div>
-      <div class="strategy-meta">
-        <div><b>Date:</b> ${esc(c.date)}</div>
-        ${c.holiday ? `<div><b>Holiday today:</b> ${esc(c.holiday.reason)} (${esc(c.holiday.date)})</div>` : ""}
-        ${c.nextHoliday ? `<div><b>Next holiday:</b> ${esc(c.nextHoliday.reason)} (${esc(c.nextHoliday.date)})</div>` : ""}
-        <div><b>Updated:</b> ${esc(c.updatedOn)}</div>
+      <div class="status-card-meta">
+        <div><b>Date</b>${esc(c.date)}</div>
+        ${c.holiday ? `<div><b>Holiday today</b>${esc(c.holiday.reason)} (${esc(c.holiday.date)})</div>` : ""}
+        ${c.nextHoliday ? `<div><b>Next holiday</b>${esc(c.nextHoliday.reason)} (${esc(c.nextHoliday.date)})</div>` : ""}
+        <div><b>Updated</b>${esc(clockTime(c.updatedOn))}</div>
       </div>
     </div>
   `;
@@ -371,8 +538,13 @@ function exchangeTimelineHtml(ex) {
   // fired too — no need to track each of the 5 stages independently.
   const currentIdx = ex.isToday ? EXCHANGE_STAGES.findIndex(s => s.key === ex.state) : -1;
 
+  // Three states, matching the console's gate row: the stage we're at now reads
+  // differently from the ones already behind us, which the old two-state
+  // done/pending split couldn't show.
+  const stageClass = (i) => i < currentIdx ? "done" : i === currentIdx ? "done current" : "pending";
+
   const stages = EXCHANGE_STAGES.map((s, i) => `
-    <div class="timeline-stage ${i <= currentIdx ? "done" : "pending"}">
+    <div class="timeline-stage ${stageClass(i)}">
       <div class="timeline-dot"></div>
       <div class="timeline-label">${s.label}<div class="timeline-time">${s.time}</div></div>
     </div>
@@ -380,7 +552,7 @@ function exchangeTimelineHtml(ex) {
   `).join("");
 
   const metaText = ex.isToday
-    ? `Updated ${esc(ex.updatedOn)}`
+    ? `Now at ${esc(stageLabelFor(ex.state))} · updated ${esc(clockTime(ex.updatedOn))}`
     : `No data for today yet — last known: ${esc(ex.date || "—")}`;
 
   return `
@@ -411,29 +583,63 @@ async function loadExchangeTimelines() {
 
 const STATUS_LABELS = { green: "On Track", amber: "Behind", red: "Behind / No Data", pending: "Pending" };
 
+// Redis stores these as IST-local strings with no zone suffix, so slicing the
+// time out is correct where `new Date(...)` would silently re-interpret them in
+// the viewer's timezone. Everything on this page is one trading day anyway, so
+// the date carries no information.
+function clockTime(iso) {
+  if (!iso) return "—";
+  const m = String(iso).match(/T(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : String(iso);
+}
+
 function candleStatusCardHtml(item) {
-  const pct = item.expectedTotal ? Math.min(100, Math.round((item.count / item.expectedTotal) * 100)) : 0;
+  const total = item.expectedTotal || 1;
+  const fill = Math.min(100, (item.count / total) * 100);
+  const exp = Math.min(100, (item.expectedSoFar / total) * 100);
   const label = STATUS_LABELS[item.status] || item.status;
+  const short = item.expectedSoFar - item.count;
+
+  // One tick per expected bar, on the same 09:15→15:30 axis the console uses.
+  const rail = `
+    <div class="rail" data-status="${item.status}" style="--bars:${total}; --fill:${fill}%; --exp:${exp}%"
+         role="img" aria-label="${esc(item.contract)} ${item.timeframe} minute: ${item.count} of ${item.expectedTotal} bars, ${item.expectedSoFar} expected by now">
+      <div class="rail-layer rest"></div>
+      <div class="rail-layer gap"></div>
+      <div class="rail-layer fill"></div>
+      <div class="rail-now"></div>
+    </div>`;
+
+  const meta = [
+    item.provider ? esc(item.provider) : null,
+    `latest ${esc(clockTime(item.latestWindowStartTime))}`,
+    `updated ${esc(clockTime(item.updatedOn))}`,
+  ].filter(Boolean).join(" · ");
 
   return `
-    <div class="strategy-card">
-      <div class="strategy-name">
-        ${esc(item.contract)}
-        <span class="badge status-${item.status}">${esc(label)}</span>
+    <div class="candle-row">
+      <div class="candle-row-head">
+        <div>
+          <span class="candle-row-name">${esc(item.contract)}</span>
+          <span class="candle-tf">${item.timeframe}m</span>
+        </div>
+        <div>
+          <span class="badge status-${item.status}">${esc(label)}</span>
+          <span class="candle-count"><b>${item.count}</b> / ${item.expectedTotal} bars</span>
+        </div>
       </div>
-      <div class="progress-row">
-        <div class="progress-bar"><div class="progress-fill status-${item.status}" style="width:${pct}%"></div></div>
-        <div class="progress-count">${item.count} / ${item.expectedTotal}</div>
+      ${rail}
+      <div class="rail-axis">
+        <span>09:15</span>
+        <span>${short > 0 ? `<b>${short}</b> behind · ` : ""}<b>${item.expectedSoFar}</b> expected by now</span>
+        <span>15:30</span>
       </div>
-      <div class="strategy-meta">
-        ${item.provider ? `<div><b>Provider:</b> ${esc(item.provider)}</div>` : ""}
-        <div><b>Expected by now:</b> ${item.expectedSoFar}</div>
-        <div><b>Latest candle:</b> ${esc(item.latestWindowStartTime || "—")}</div>
-        <div><b>Updated:</b> ${esc(item.updatedOn || "—")}</div>
-      </div>
-      <div class="storage-indicators">
-        <span class="storage-pill ${item.inRedis ? "ok" : "bad"}"><span class="storage-dot"></span>Redis</span>
-        <span class="storage-pill ${item.inAzurite ? "ok" : "bad"}"><span class="storage-dot"></span>Azurite</span>
+      <div class="candle-row-foot">
+        <span class="candle-row-meta">${meta}</span>
+        <span class="storage-indicators">
+          <span class="storage-pill ${item.inRedis ? "ok" : "bad"}"><span class="storage-dot"></span>Redis</span>
+          <span class="storage-pill ${item.inAzurite ? "ok" : "bad"}"><span class="storage-dot"></span>Azurite</span>
+        </span>
       </div>
     </div>
   `;
@@ -470,7 +676,7 @@ async function refresh() {
     loadIngestionStatus(),
     loadAggregationStatus(),
   ]);
-  document.getElementById("last-refresh").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  document.getElementById("stamp").title = `Data last refreshed ${new Date().toLocaleTimeString()}`;
 }
 
 window.addEventListener("resize", () => drawConnections(lastServices));
@@ -768,19 +974,7 @@ async function loadStrategyGrid() {
       return;
     }
 
-    el.innerHTML = `
-      <div class="table-scroll">
-        <table class="strategy-table">
-          <thead>
-            <tr>
-              <th>Exchange</th><th>Strategy Name</th><th>Version</th><th>Deployed Version</th><th>Broker</th>
-              <th>Goals</th><th>Risk</th><th>Trade Type</th><th>Instruments</th><th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>${strategyList.map(strategyRowHtml).join("")}</tbody>
-        </table>
-      </div>
-    `;
+    el.innerHTML = `<div class="strategy-rows">${strategyList.map(strategyRowHtml).join("")}</div>`;
     el.querySelectorAll("[data-action]").forEach(btn => {
       btn.addEventListener("click", () => {
         const { action, id } = btn.dataset;
@@ -798,28 +992,41 @@ async function loadStrategyGrid() {
 
 function strategyRowHtml(s) {
   const isDeployed = s.deployedVersion && s.deployedVersion === s.version;
-  const deployedCell = s.deployedVersion
-    ? `v${esc(s.deployedVersion)} ${isDeployed ? `<span class="badge badge-deployed">Current</span>` : `<span class="badge badge-not-deployed">Behind</span>`}`
+  const deployBadge = s.deployedVersion
+    ? (isDeployed
+        ? `<span class="badge badge-deployed">Deployed v${esc(s.deployedVersion)}</span>`
+        : `<span class="badge badge-not-deployed">Deployed v${esc(s.deployedVersion)} · behind</span>`)
     : `<span class="badge">Not deployed</span>`;
 
+  // Only the facts that are actually set. The table this replaced rendered an
+  // em-dash for every unset field, so a sparse strategy read as broken rather
+  // than simply not configured yet.
+  const meta = [
+    esc(s.exchange || ""),
+    esc(s.broker || ""),
+    esc(s.tradeType || ""),
+    s.risk ? `risk ${esc(s.risk)}` : "",
+    s.goals && s.goals.length ? esc(s.goals.join(", ")) : "",
+    s.instruments && s.instruments.length ? esc(s.instruments.join(", ")) : "",
+  ].filter(Boolean).join(" · ");
+
   return `
-    <tr>
-      <td>${esc(s.exchange || "—")}</td>
-      <td class="strategy-name-cell">${esc(s.strategyName || s.id)}</td>
-      <td>v${esc(s.version)}</td>
-      <td>${deployedCell}</td>
-      <td>${esc(s.broker || "—")}</td>
-      <td>${s.goals && s.goals.length ? esc(s.goals.join(", ")) : "—"}</td>
-      <td>${esc(s.risk || "—")}</td>
-      <td>${esc(s.tradeType || "—")}</td>
-      <td>${s.instruments && s.instruments.length ? esc(s.instruments.join(", ")) : "—"}</td>
-      <td class="strategy-actions-cell">
-        <button class="btn" data-action="view" data-id="${esc(s.id)}">View</button>
-        <button class="btn" data-action="edit" data-id="${esc(s.id)}">Edit</button>
-        <button class="btn btn-primary" data-action="deploy" data-id="${esc(s.id)}">Deploy</button>
-        <button class="btn btn-danger" data-action="delete" data-id="${esc(s.id)}">Delete</button>
-      </td>
-    </tr>
+    <div class="strategy-row">
+      <div class="strategy-row-head">
+        <div class="strategy-row-title">
+          <span class="strategy-row-name">${esc(s.strategyName || s.id)}</span>
+          <span class="candle-tf">v${esc(s.version)}</span>
+          ${deployBadge}
+        </div>
+        <div class="strategy-row-actions">
+          <button class="btn" data-action="view" data-id="${esc(s.id)}">View</button>
+          <button class="btn" data-action="edit" data-id="${esc(s.id)}">Edit</button>
+          <button class="btn btn-primary" data-action="deploy" data-id="${esc(s.id)}">Deploy</button>
+          <button class="btn btn-danger" data-action="delete" data-id="${esc(s.id)}">Delete</button>
+        </div>
+      </div>
+      ${meta ? `<div class="strategy-row-meta">${meta}</div>` : `<div class="strategy-row-meta">Nothing configured yet</div>`}
+    </div>
   `;
 }
 

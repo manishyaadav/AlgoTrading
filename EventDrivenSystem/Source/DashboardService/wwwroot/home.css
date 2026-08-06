@@ -1,0 +1,583 @@
+/* ============================================================================
+   AlgoTrading — console entry page
+   Standalone from style.css on purpose: the dashboard is instrumentation and
+   stays flat/dense, this page is the front door and carries the identity.
+   Shares only the `theme` localStorage key so the toggle carries across.
+   ========================================================================== */
+
+:root {
+  --ink:    #080b12;   /* canvas — navy-black, the desk before the open */
+  --ink-2:  #0e1320;   /* raised surface */
+  --ink-3:  #141b2b;   /* card hover */
+  --rule:   #1e2839;   /* hairline */
+  --bone:   #e9eef7;   /* primary text */
+  --dim:    #78859c;   /* secondary text */
+  --saffron:#ffb44a;   /* session live */
+  --indigo: #7c89ff;   /* session dormant */
+  --jade:   #38d9a4;   /* flowing / healthy */
+  --ember:  #ff5c72;   /* behind / down */
+
+  --shell: 1180px;
+  --fast: 150ms ease;
+  --slow: 420ms cubic-bezier(.22,.61,.36,1);
+}
+
+:root[data-theme="light"] {
+  --ink:    #f1f4f9;
+  --ink-2:  #ffffff;
+  --ink-3:  #e8edf5;
+  --rule:   #d2d9e6;
+  --bone:   #101725;
+  --dim:    #566275;
+  /* darkened against the light canvas so the 11px eyebrow and 12px card stats
+     clear AA — the dark-theme values are already well past it */
+  --saffron:#9a5906;
+  --indigo: #4149cf;
+  --jade:   #087550;
+  --ember:  #c62038;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --ink:    #f1f4f9;
+    --ink-2:  #ffffff;
+    --ink-3:  #e8edf5;
+    --rule:   #d2d9e6;
+    --bone:   #101725;
+    --dim:    #566275;
+    --saffron:#a8620a;
+    --indigo: #4149cf;
+    --jade:   #0b8f62;
+    --ember:  #c62038;
+  }
+}
+
+/* The page's accent is the session's phase. Everything keyed to --accent moves
+   with the trading day rather than being a fixed brand colour. */
+:root                      { --accent: var(--indigo); }
+:root[data-phase="open"]   { --accent: var(--saffron); }
+:root[data-phase="late"]   { --accent: var(--saffron); }
+:root[data-phase="closed"] { --accent: var(--dim); }
+:root[data-phase="off"]    { --accent: var(--dim); }
+:root[data-phase="down"]   { --accent: var(--ember); }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: "Inter Tight", -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A single wash of the phase colour from the top edge — the only atmosphere
+   on the page, and it changes colour when the market opens. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 60vh;
+  background: radial-gradient(90% 100% at 50% 0%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+  transition: background var(--slow);
+  z-index: 0;
+}
+
+main, .bar, .foot { position: relative; z-index: 1; }
+
+a { color: inherit; }
+
+:where(a, button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+.skip:focus {
+  left: 16px;
+  top: 12px;
+  z-index: 5;
+  background: var(--ink-2);
+  border: 1px solid var(--rule);
+  padding: 8px 14px;
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+/* ── Utility face: every number, label and eyebrow on the page ───────────── */
+.eyebrow, .stamp, .gates, .axis, .track__meta, .legend, .poll,
+.card__stat, .routes__title, .session__title, .tracks__empty {
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 20px 24px;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 112, "wght" 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.mark__glyph {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke var(--slow);
+}
+
+.bar__right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 13px;
+}
+
+.stamp {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  letter-spacing: 0.02em;
+}
+.stamp__time { color: var(--bone); }
+.stamp__zone { font-size: 10px; letter-spacing: 0.14em; }
+
+.bar__link {
+  text-decoration: none;
+  color: var(--dim);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 2px;
+  transition: color var(--fast), border-color var(--fast);
+}
+.bar__link:hover { color: var(--bone); border-color: var(--accent); }
+
+.ghost-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  transition: color var(--fast), border-color var(--fast);
+}
+.ghost-btn:hover { color: var(--bone); border-color: var(--accent); }
+.ghost-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Console ─────────────────────────────────────────────────────────────── */
+.console {
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 40px 24px 0;
+}
+
+.eyebrow {
+  margin: 0 0 22px;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  transition: color var(--slow);
+}
+.eyebrow::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 10px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+
+.verdict {
+  margin: 0;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 115, "wght" 800;
+  font-size: clamp(2.6rem, 7.4vw, 5.4rem);
+  line-height: 0.94;
+  letter-spacing: -0.035em;
+  max-width: 15ch;
+}
+
+.summary {
+  margin: 20px 0 0;
+  max-width: 58ch;
+  color: var(--dim);
+  font-size: 1.0625rem;
+}
+.summary b {
+  color: var(--bone);
+  font-weight: 500;
+}
+
+/* ── Signature: the session ribbon ───────────────────────────────────────── */
+.session {
+  margin: 48px 0 0;
+  padding: 22px 24px 20px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink-2) 78%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.session__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+  margin-bottom: 20px;
+}
+
+.session__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* The five exchange stages, in the order exchange-live fires them. */
+.gates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+.gate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+  opacity: 0.5;
+}
+.gate::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+.gate + .gate { margin-left: 15px; position: relative; }
+.gate + .gate::after { /* connector, drawn into the left margin */
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: var(--rule);
+}
+.gate--passed { opacity: 1; color: var(--dim); }
+.gate--passed::before { background: currentColor; }
+.gate--current {
+  opacity: 1;
+  color: var(--accent);
+  font-weight: 600;
+}
+.gate--current::before { background: currentColor; }
+
+.axis {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10.5px;
+  color: var(--dim);
+  letter-spacing: 0.08em;
+}
+.axis__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.tracks {
+  position: relative;
+  padding-top: 26px;
+  margin-top: 6px;
+}
+
+/* The one vertical rule that ties every contract to the same instant. */
+.now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--now, 0%);
+  width: 1px;
+  background: var(--accent);
+  opacity: 0.85;
+  pointer-events: none;
+  transition: left var(--slow), background var(--slow);
+  z-index: 2;
+}
+.now__flag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--ink-2); /* inverts with the theme, so the flag stays legible on either accent */
+  font-family: "Fira Code", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transition: background var(--slow);
+}
+.now[hidden] { display: none; }
+
+.tracks__empty {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.track {
+  margin-bottom: 14px;
+}
+.track:last-child { margin-bottom: 2px; }
+
+.track__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+.track__name { color: var(--bone); }
+.track__tf {
+  margin-left: 8px;
+  padding: 1px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+}
+.track__count { white-space: nowrap; }
+.track__count b { color: var(--bone); font-weight: 500; }
+
+/* Three stacked full-width tick layers, each clipped to its own share of the
+   session. Keeping every layer full width means the tick period stays locked
+   to the axis instead of stretching with the fill. */
+.track__rail {
+  position: relative;
+  height: 22px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.track--thin .track__rail { height: 13px; }
+
+.layer {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(90deg, currentColor 0 58%, transparent 58%);
+  background-size: calc(100% / var(--bars, 375)) 100%;
+  transition: clip-path var(--slow), color var(--slow);
+}
+.layer--rest { color: var(--rule); }
+.layer--gap  { color: var(--ember); clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); opacity: 0.55; }
+.layer--fill { color: var(--accent); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
+
+.track--behind .layer--fill { color: var(--ember); }
+.track--thin   .layer--fill { color: var(--jade); }
+.track--thin.track--behind .layer--fill { color: var(--ember); }
+
+/* Under ~760px a 375-tick period falls below a device pixel and turns to mush —
+   drop to a solid bar, which reads the same at a glance. */
+@media (max-width: 760px) {
+  .layer { background-image: linear-gradient(90deg, currentColor 0 100%); }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.key {
+  display: inline-block;
+  width: 16px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 1px;
+  vertical-align: -1px;
+}
+.key--fill { background: var(--accent); }
+.key--gap  { background: var(--ember); opacity: 0.55; }
+.key--rest { background: var(--rule); }
+
+/* ── Routes ──────────────────────────────────────────────────────────────── */
+.routes {
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 72px 24px 0;
+}
+
+.routes__title {
+  margin: 0 0 18px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--ink-2);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color var(--fast), background var(--fast), transform var(--fast);
+}
+.card:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--rule));
+  background: var(--ink-3);
+  transform: translateY(-2px);
+}
+.card--idle { opacity: 0.62; }
+.card--idle:hover { opacity: 1; }
+
+.card__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card__icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke var(--slow);
+}
+.card--idle .card__icon { stroke: var(--dim); }
+.card__name {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 0.9375rem;
+  letter-spacing: -0.005em;
+}
+.card__stat {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--dim);
+}
+.card__stat b { color: var(--bone); font-weight: 500; }
+.card__stat--ok   b { color: var(--jade); }
+.card__stat--warn b { color: var(--ember); }
+
+/* ── Foot ────────────────────────────────────────────────────────────────── */
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  max-width: var(--shell);
+  margin: 80px auto 0;
+  padding: 20px 24px 40px;
+  border-top: 1px solid var(--rule);
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.foot__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+}
+.foot a {
+  text-decoration: none;
+  transition: color var(--fast);
+}
+.foot a:hover { color: var(--bone); }
+.poll { font-size: 11px; letter-spacing: 0.04em; }
+.poll--error { color: var(--ember); }
+
+/* ── Entrance: one orchestrated load, not scattered effects ──────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .eyebrow, .verdict, .summary, .session, .routes {
+    animation: rise 620ms cubic-bezier(.22,.61,.36,1) backwards;
+  }
+  .verdict  { animation-delay: 60ms; }
+  .summary  { animation-delay: 120ms; }
+  .session  { animation-delay: 190ms; }
+  .routes   { animation-delay: 260ms; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+}
+
+@media (max-width: 620px) {
+  .bar { flex-wrap: wrap; }
+  .console { padding-top: 24px; }
+  .session { padding: 18px 16px 16px; }
+  .verdict { max-width: none; }
+  .foot { margin-top: 56px; }
+}
