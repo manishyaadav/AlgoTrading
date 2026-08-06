@@ -54,6 +54,7 @@ docker-compose -f docker-compose-live.yml -p live down       # remove containers
 | `exchange-live` | exchange-service-live-container | 8094 | 5 daily timers: exchange session state (init/pre-open/open/pre-close/close), publishes to Kafka | [Source/ExchangeService/readme.md](EventDrivenSystem/Source/ExchangeService/readme.md) |
 | `aggregation-live` | aggregation-service-live-container | 8095 | Kafka-triggered: rolls 1-min candles into 5/10/15/30/60/75-min candles | [Source/AggregationService/README.md](EventDrivenSystem/Source/AggregationService/README.md) |
 | `strategy-live` | strategy-service-live-container | 8096 | CRUD API over strategy JSON configs; schema only, no rule execution yet | [Source/StrategyService/README.md](EventDrivenSystem/Source/StrategyService/README.md) |
+| `warmup-live` | warmup-service-live-container | 8100 | Kafka-triggered on NSE's `Init`: checks Redis against `strategy-live`'s warm-up plan, reports what's missing. Status-check only today, no fetching yet | [Source/WarmUpService/README.md](EventDrivenSystem/Source/WarmUpService/README.md) |
 | `signalr-live` | signalr-server-live | 8098→5091 | Self-hosted SignalR hub server — real-time push to UI clients | [Source/Helpers/SignalRServer/ReadMe.md](EventDrivenSystem/Source/Helpers/SignalRServer/ReadMe.md) |
 | `notification-live` | notification-service-live-container | 9098 | Kafka-triggered: writes to Redis, forwards to SignalR hubs | [Source/NotificationService/README.md](EventDrivenSystem/Source/NotificationService/README.md) |
 
@@ -71,7 +72,7 @@ docker-compose -f docker-compose-live.yml -p live down       # remove containers
 | `live-aggregation-ohlc-60min-topic` | `aggregation-live` (`Aggregation60MinutesFunction`) | `notification-live` (`Aggregation60MNotification`) |
 | `live-aggregation-ohlc-75min-topic` | `aggregation-live` (`Aggregation75MinutesFunction`) | `notification-live` (`Aggregation75MNotification`) |
 | `live-country-workflow-topic` | `country-live` | `notification-live` (`CountryNotificationFunctions`) |
-| `live-exchange-workflow-topic` | `exchange-live` | `notification-live` (`ExchangeNotificationFunctions`) |
+| `live-exchange-workflow-topic` | `exchange-live` | `notification-live` (`ExchangeNotificationFunctions`), `warmup-live` (`WarmUpOnExchangeInit` — filters to NSE `Init` only) |
 
 Browse all of this live at **Kafdrop: http://localhost:9000**.
 
@@ -119,6 +120,10 @@ docker-compose -f docker-compose-live.yml -p live up -d <compose-service-name>  
 ```
 
 Exact image name, tag, and build path per service are in each service's own README (linked in the table above).
+
+## Roadmap / in design
+
+**[WARMUP_AND_INDICATOR_PLAN.md](WARMUP_AND_INDICATOR_PLAN.md)** — the design plan for turning a deployed strategy into live indicator computation: pre-market data warm-up (a new service, working name `WarmUpService`), per-indicator-type calculators in `aggregation-live` (EMA, Supertrend, Pivot Central Range), and a deploy-time guardrail in `strategy-live`. Nothing in it is built yet except the `StrategyService` manifest/warm-up-plan endpoints it depends on (already shipped, documented in [StrategyService/README.md](EventDrivenSystem/Source/StrategyService/README.md)). Also tracks what's deliberately parked for later — the strategy execution engine itself, position management, and the maintenance taxonomy (daily/weekly/monthly/yearly).
 
 ## Known issues
 

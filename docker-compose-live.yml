@@ -277,6 +277,28 @@ services:
     networks:
       - live-network
 
+  warmup-live:
+    image: warmup-service-live-image:v1
+    container_name: warmup-service-live-container
+    ports:
+      - "8100:80"
+    environment:
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite-live:10000/devstoreaccount1;QueueEndpoint=http://azurite-live:10001/devstoreaccount1;TableEndpoint=http://azurite-live:10002/devstoreaccount1;"
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+      "ASPNETCORE_ENVIRONMENT": "docker"
+      "TZ": "Asia/Kolkata"
+      "KAFKA_BROKER_URL": "kafka-live:29092"
+      "RedisConnectionString": "redis-live:6379"
+      "StrategyServiceUrl": "http://strategy-live"
+    depends_on:
+      - azurite-live
+      - kafka-live
+      - redis-live
+      - strategy-live
+    restart: unless-stopped
+    networks:
+      - live-network
+
   notification-live:
     image: notification-service-live-image:v1
     container_name: notification-service-live-container
