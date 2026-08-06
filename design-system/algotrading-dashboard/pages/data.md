@@ -63,6 +63,31 @@ updates every 5s and proportional figures make the row jitter.
 Timestamps go through `clockTime()` — Redis stores them as IST-local strings with no zone suffix,
 so `new Date(...)` would shift them into the viewer's timezone.
 
+## Instrument color
+
+`.candle-row-name` gets its color from `instrumentColorVar()` in `app.js`, which picks one of
+MASTER.md's five `--tag-*` categorical tokens **in first-discovery order**, cached in a `Map` for
+the page's lifetime — not hashed. A hash has no collision guarantee: BANKNIFTY and NIFTY, the very
+first two tickers this shipped with, landed on the identical tag under a plain string hash, which
+defeats the entire point. First-seen ordinal assignment guarantees every distinct ticker gets its
+own color as long as ≤5 are on screen at once. Same ticker → same color on every card, in both
+Ingestion and Aggregation, without ever hand-mapping a specific ticker to a specific color — the
+Services page's old `CATEGORIES` color scheme took that shortcut and it's exactly why a container
+silently fell into the wrong bucket when nobody updated the map.
+
+`--tag-*` is identity-only, never status — don't reach for it to mean "behind" or "stale"; that's
+still `--red`/`--yellow` via the rail and the badge.
+
+## Section titles
+
+"Data Ingestion (1-min)" and "Aggregation" use `.rules-group-label--highlight` instead of the
+plain `.rules-group-label` that Exchanges' "Country" / "Exchange Session Timeline" use. This page
+has no per-subsection `h2` to lean on the way a page boundary does, so these two carry more visual
+weight: Archivo instead of the Fira Code eyebrow face, `--text` instead of `--muted`, an `--accent`
+dot and top rule. Scoped to this page only — don't apply the modifier class to `.rules-group-label`
+elsewhere (Exchanges, the Strategy rule builder's Long/Short Entry labels) without deciding that's
+wanted there too.
+
 ## Checklist
 
 - [ ] Rows stay full-width and stacked
@@ -71,3 +96,6 @@ so `new Date(...)` would shift them into the viewer's timezone.
 - [ ] The `<760px` solid-bar fallback survives
 - [ ] Shortfall stated in text (`N behind`), not by colour alone
 - [ ] Timestamps through `clockTime()`
+- [ ] Instrument color via `instrumentColorVar()`'s first-seen assignment, never a hash (no
+      collision guarantee) or a hardcoded ticker→color map
+- [ ] `--tag-*` used for identity only, never repurposed as a status color

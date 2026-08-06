@@ -33,6 +33,18 @@ Realigned to `wwwroot/home.css` so the console and the dashboard read as one app
 | Green (positive) | `#38d9a4` | `#087550` | `--green` / `--green-bg` | Running, fresh, gains |
 | Red (negative) | `#ff5c72` | `#c62038` | `--red` / `--red-bg` | Exited/dead, stale, losses |
 | Yellow (caution) | `#ffb44a` | `#9a5906` | `--yellow` / `--yellow-bg` | "Other"/in-between states |
+| Tag 1 (cyan) | `#22d3ee` | `#0e7490` | `--tag-1` | Categorical identity only — never status |
+| Tag 2 (violet) | `#a78bfa` | `#6d28d9` | `--tag-2` | Categorical identity only — never status |
+| Tag 3 (pink) | `#f472b6` | `#be185d` | `--tag-3` | Categorical identity only — never status |
+| Tag 4 (sky) | `#38bdf8` | `#0369a1` | `--tag-4` | Categorical identity only — never status |
+| Tag 5 (teal) | `#2dd4bf` | `#0f766e` | `--tag-5` | Categorical identity only — never status |
+
+**`--tag-*` distinguishes same-type dynamic items** (currently: instrument/ticker names on the
+Data page) **by identity, never by state.** Assign it in first-discovery order, cached for the
+page's lifetime — see `instrumentColorVar()` in `app.js` — not by hashing the name (no collision
+guarantee — two real tickers landed on the same tag under a plain hash) and never by a
+hand-maintained name→color map; that's the exact mistake the old Services page `CATEGORIES` color
+scheme made; see `pages/services.md`.
 
 **`*-bg` tints are 0.15 alpha in dark, 0.08 in light.** Pills and badges put text on a tint of
 its own hue, which costs ~0.5 of a contrast ratio; at 10px that's the difference between passing

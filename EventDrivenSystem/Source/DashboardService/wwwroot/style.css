@@ -17,6 +17,18 @@
   --yellow-bg: rgba(255,180,74,0.15);
   --line: #35435c;
   --surface: color-mix(in srgb, var(--panel) 78%, transparent); /* translucent --panel, so top-level panels pick up the page wash */
+
+  /* Categorical palette — identity only, never status. For telling apart same-
+     type dynamic items (e.g. instrument/ticker names) at a glance; assigned by
+     hashing the item's name (see instrumentColorVar() in app.js), never
+     hand-mapped to a specific ticker. Cool hues, deliberately clear of
+     green/red/yellow (status) and accent (interactive). */
+  --tag-1: #22d3ee; /* cyan */
+  --tag-2: #a78bfa; /* violet */
+  --tag-3: #f472b6; /* pink */
+  --tag-4: #38bdf8; /* sky */
+  --tag-5: #2dd4bf; /* teal */
+
   font-family: "Inter Tight", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 
   /* spacing scale — formalizes the app's existing 8/12/14/16/24/32px rhythm */
@@ -56,6 +68,13 @@
     --yellow: #9a5906;
     --yellow-bg: rgba(154,89,6,0.08);
     --line: #b9c2d4;
+
+    /* darker/more saturated than the dark-theme set — same AA reasoning as red above */
+    --tag-1: #0e7490;
+    --tag-2: #6d28d9;
+    --tag-3: #be185d;
+    --tag-4: #0369a1;
+    --tag-5: #0f766e;
   }
 }
 
@@ -78,6 +97,12 @@
   --yellow: #9a5906;
   --yellow-bg: rgba(154,89,6,0.08);
   --line: #b9c2d4;
+
+  --tag-1: #0e7490;
+  --tag-2: #6d28d9;
+  --tag-3: #be185d;
+  --tag-4: #0369a1;
+  --tag-5: #0f766e;
 }
 
 :root[data-theme="dark"] {
@@ -96,6 +121,12 @@
   --yellow: #ffb44a;
   --yellow-bg: rgba(255,180,74,0.15);
   --line: #35435c;
+
+  --tag-1: #22d3ee;
+  --tag-2: #a78bfa;
+  --tag-3: #f472b6;
+  --tag-4: #38bdf8;
+  --tag-5: #2dd4bf;
 }
 
 /* Same split as home.css: --phase moves with the trading day and carries
@@ -724,6 +755,31 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   margin: 22px 0 10px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+/* Highlighted variant — for the Data page's "Data Ingestion (1-min)" /
+   "Aggregation" titles specifically, which carry more weight on that page
+   than a regular eyebrow (there's no h2-per-subsection to lean on, unlike
+   Exchanges' "Country" / "Exchange Session Timeline", which stay plain). */
+.rules-group-label--highlight {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 110, "wght" 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+  border-top: 2px solid var(--accent);
+}
+.rules-group-label--highlight::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .rules-section { margin-bottom: 18px; }

@@ -573,6 +573,28 @@ function clockTime(iso) {
   return m ? m[1] : String(iso);
 }
 
+// Non-hardcoded color per instrument — same ticker always gets the same
+// --tag-N across both Ingestion and Aggregation cards, without ever mapping a
+// specific ticker name to a specific color (this app discovers tickers
+// dynamically; a hand-maintained map would silently miss new ones, the same
+// trap the old Services page CATEGORIES color scheme fell into).
+//
+// Assigned in first-discovery order (not hashed) and cached for the page's
+// lifetime: a hash has no collision guarantee — BANKNIFTY and NIFTY landed on
+// the identical tag under a straightforward string hash — while first-seen
+// ordinal assignment guarantees every distinct ticker gets its own color as
+// long as there are no more than INSTRUMENT_TAGS of them on screen at once,
+// which covers every contract list this dashboard has ever shown.
+const INSTRUMENT_TAGS = 5;
+const instrumentTagByName = new Map();
+function instrumentColorVar(name) {
+  const key = String(name || "");
+  if (!instrumentTagByName.has(key)) {
+    instrumentTagByName.set(key, (instrumentTagByName.size % INSTRUMENT_TAGS) + 1);
+  }
+  return `var(--tag-${instrumentTagByName.get(key)})`;
+}
+
 function candleStatusCardHtml(item) {
   const total = item.expectedTotal || 1;
   const fill = Math.min(100, (item.count / total) * 100);
@@ -600,7 +622,7 @@ function candleStatusCardHtml(item) {
     <div class="candle-row">
       <div class="candle-row-head">
         <div>
-          <span class="candle-row-name">${esc(item.contract)}</span>
+          <span class="candle-row-name" style="color:${instrumentColorVar(item.contract)}">${esc(item.contract)}</span>
           <span class="candle-tf">${item.timeframe}m</span>
         </div>
         <div>
