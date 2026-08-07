@@ -447,9 +447,14 @@ a { color: inherit; }
    flipped the whole run back a few seconds later once it caught up. The gap
    layer above already carries the "behind" signal on its own, for exactly the
    bars that are actually missing — see the Data page's identical fix,
-   design-system/algotrading-dashboard/pages/data.md. */
+   design-system/algotrading-dashboard/pages/data.md.
+
+   One color for "ingested," not two: this used to be --jade for .track--thin
+   (aggregation) rows and --phase for the un-thin 1-min row, so the legend's
+   single amber "ingested" swatch was only ever true for one row in eight. All
+   fill is --phase now, matching the legend and matching what MASTER.md always
+   said --phase should drive ("rail fill," no thin/un-thin distinction). */
 .layer--fill { color: var(--phase); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
-.track--thin .layer--fill { color: var(--jade); }
 
 /* Under ~760px a 375-tick period falls below a device pixel and turns to mush —
    drop to a solid bar, which reads the same at a glance. */

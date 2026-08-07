@@ -80,12 +80,18 @@ every 5s would throw away keyboard focus.
 `.track--thin.track--behind .layer--fill` both forced it to `--ember`), which retroactively
 repainted every already-ingested bar red the moment the aggregate ratio dipped, then flipped the
 whole run back a few seconds later once the backend caught up — on the session ribbon that meant
-several contracts' worth of already-correct bars flashing red together for no real reason. Fill
-stays `--phase` (1-min ingestion rows) or `--jade` (aggregation/"thin" rows) regardless of status;
-the gap layer already carries the "behind" signal on its own, for exactly the bars that are
-actually missing. Same fix, same reasoning, as the Data page's `.rail-layer.fill` — see
-`pages/data.md`'s "Status colour never repaints arrived data". Do this one first if you're touching
-both files, since it's the same bug in two places.
+several contracts' worth of already-correct bars flashing red together for no real reason. The gap
+layer already carries the "behind" signal on its own, for exactly the bars that are actually
+missing. Same fix, same reasoning, as the Data page's `.rail-layer.fill` — see `pages/data.md`'s
+"Status colour never repaints arrived data".
+
+**Fill is one color, `--phase`, full stop — not `--phase` for the 1-min row and `--jade` for
+`.track--thin` (aggregation) rows.** That split meant the legend's single amber "ingested" swatch
+(`.key--fill { background: var(--phase); }`) was only ever true for one row out of eight; every
+aggregated timeframe rendered green while claiming to match an amber legend key. `--phase` is also
+what MASTER.md's phase table always said should drive "rail fill" — the `--jade` override was the
+inconsistency, not the fix. `--jade` is still a real token, just no longer used here; it still
+colors `.card__stat--ok`.
 
 ## Rules for this page
 

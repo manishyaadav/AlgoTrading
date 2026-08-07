@@ -58,15 +58,30 @@ Track` / `Behind` / `Behind / No Data`) still carries the aggregate signal in te
 a red gap sliver + an amber badge is a coherent, honest picture: "this much data is here, this one
 bucket is short, and that's enough to call the timeframe behind" — not "all your data is bad now."
 
-`ComputeStatus` (`Program.cs`) also changed alongside this, from a ratio to an **absolute bucket
-gap** (`expectedSoFar - count`): ≤1 behind is `green`, 2-3 is `amber`, 4+ (or zero data all
-session) is `red`. A ratio made low-`expectedTotal` timeframes absurdly sensitive to completely
-normal lag — 75-min has only 5 buckets in a whole session, so being one bucket behind (which
-happens routinely right after every boundary, especially for the cascaded 10/15/30/60/75-min
-aggregators that wait on another aggregator's own bucket cycle before they can even start) is a
-20% ratio swing and used to flip straight to amber. The identical one-bucket lag on 1-min (375
-buckets) barely dented its ratio. A gap threshold treats "how many buckets behind" the same
-regardless of how many buckets exist in total, which is what actually matters.
+`ComputeStatus` (`Program.cs`) has been through two revisions, each fixing a real failure this app
+hit in production:
+
+1. **Ratio → absolute bucket gap.** `count / expectedSoFar >= 0.9` made low-`expectedTotal`
+   timeframes absurdly sensitive to completely normal lag — 75-min has only 5 buckets in a whole
+   session, so being one bucket behind (routine right after every boundary, especially for the
+   cascaded 10/15/30/60/75-min aggregators that wait on another aggregator's own bucket cycle
+   before they can even start) is a 20% ratio swing that flipped straight to amber. The identical
+   one-bucket lag on 1-min (375 buckets) barely dented its ratio.
+2. **Cumulative gap → freshness of the latest arrival.** Even the fixed absolute-gap version
+   (`expectedSoFar - count`) shared the ratio's real flaw: neither can recover from a *permanent*
+   historical gap. If the pipeline is down for a stretch and misses, say, 40 buckets, `count`
+   stays 40 short of `expectedSoFar` for the rest of the day — even once the pipeline has been
+   perfectly healthy for hours since resuming. The badge stayed red forever, regardless of how
+   well things were actually going right now.
+
+`ComputeStatus` now takes `latestAgeSeconds` — how long since the most recent bar arrived — and
+compares it against the same "stale" thresholds `/api/freshness` already uses (2×/4× the
+timeframe): `green` if fresh, `amber` if moderately stale, `red` if very stale or nothing has
+arrived at all this session. One shared definition of "stale" across the app, applied to whichever
+bar is *most recent*, not a running total — a candle that landed 90 seconds ago means "caught up
+right now," full stop, regardless of what happened three hours earlier. The cumulative gap is
+still shown as informational text (`N short`) — that's accurate and worth keeping — it just no
+longer drives the color.
 
 ## Row anatomy
 
@@ -119,8 +134,9 @@ from a section they're already inside, not a page-level heading.
 - [ ] Timestamps through `clockTime()`
 - [ ] `.rail-layer.fill` stays green regardless of status — never re-add a `data-status` color
       override on it; arrived data doesn't retroactively become wrong
-- [ ] Status thresholds stay an absolute bucket gap, not a ratio — a ratio breaks every
-      low-`expectedTotal` timeframe (30/60/75-min) the same way it did before
+- [ ] Status stays based on freshness of the latest arrival (`latestAgeSeconds`), not a
+      cumulative count/ratio/gap — anything cumulative can never recover from a permanent
+      historical gap (an earlier outage) even once the pipeline is fully healthy again
 - [ ] Instrument color via `instrumentColorVar()`'s first-seen assignment, never a hash (no
       collision guarantee) or a hardcoded ticker→color map
 - [ ] `--tag-*` used for identity only, never repurposed as a status color

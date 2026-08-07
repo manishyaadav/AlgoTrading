@@ -332,7 +332,6 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
 
     int expectedTotal = 375 / timeframeMinutes; // 375 one-minute bars in a 9:15-3:30 session
     int expectedSoFar = ExpectedSoFar(timeframeMinutes, expectedTotal);
-    string status = ComputeStatus(count, expectedSoFar);
 
     // Latest snapshot, for display — separate key from the count SET above.
     RedisValue snapshot = await db.StringGetAsync(snapshotKeyBuilder(ticker));
@@ -347,6 +346,11 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
         }
         catch (JsonException) { /* leave blank rather than fail the whole request */ }
     }
+
+    double? latestAgeSeconds = DateTime.TryParse(updatedOn, out var updatedOnParsed)
+        ? (IstNow() - updatedOnParsed).TotalSeconds
+        : null;
+    string status = ComputeStatus(count, expectedSoFar, latestAgeSeconds, timeframeMinutes);
 
     bool inAzurite = await CheckAzurite(ohlcClient, ticker, today);
 
@@ -366,24 +370,26 @@ static int ExpectedSoFar(int intervalMinutes, int expectedTotal)
     return Math.Min(expectedTotal, (int)(elapsedMinutes / intervalMinutes));
 }
 
-static string ComputeStatus(long count, int expectedSoFar)
+static string ComputeStatus(long count, int expectedSoFar, double? latestAgeSeconds, int timeframeMinutes)
 {
     // Before market open there's nothing to be behind on yet — that's "pending", not a warning.
     if (expectedSoFar <= 0) return count > 0 ? "green" : "pending";
 
-    // Absolute bucket gap, not a ratio. A ratio makes low-expectedTotal timeframes wildly
-    // over-sensitive to completely normal lag: 75-min only has 5 buckets in a session, so being
-    // a single bucket behind — which happens routinely right after every boundary, especially
-    // for the cascaded 10/15/30/60/75-min aggregators that wait on another aggregator's own
-    // bucket cycle before they can even start — is a 20% ratio drop and used to flip straight to
-    // amber. The same one-bucket lag on 1-min (375 buckets) barely moved its ratio at all. Gap-
-    // based thresholds treat "how many buckets behind" the same way regardless of how many
-    // buckets exist in total, which is what actually matters here.
-    long gap = expectedSoFar - count;
+    // Status reflects how CURRENT the most recent arrival is, not the cumulative count-for-the-
+    // day. Cumulative count was tried first (an absolute bucket gap, replacing an even earlier
+    // ratio) and both share the same fatal flaw: they can never recover from a permanent
+    // historical gap. If the pipeline was down for a stretch and has been perfectly healthy ever
+    // since resuming, count stays short of expectedSoFar by exactly the size of that outage —
+    // forever, for the rest of the day — so the badge stayed red no matter how well things were
+    // actually going right now. Freshness of the latest arrival has no memory of history: a
+    // recent candle means "caught up as of now" regardless of what happened three hours ago.
+    // Same 2x/4x-the-timeframe thresholds /api/freshness already uses for its own stale check —
+    // one shared definition of "stale" across the app, not a second one invented here.
+    if (latestAgeSeconds is null) return "red"; // nothing has arrived at all this session
 
-    if (gap <= 1) return "green";       // routine processing lag, not a problem
-    if (count == 0) return "red";       // nothing has arrived at all this session
-    if (gap <= 3) return "amber";
+    double intervalSeconds = timeframeMinutes * 60;
+    if (latestAgeSeconds <= intervalSeconds * 2) return "green";
+    if (latestAgeSeconds <= intervalSeconds * 4) return "amber";
     return "red";
 }
 
