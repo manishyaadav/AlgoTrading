@@ -6,7 +6,7 @@ Read-only HTTP API backed by blob storage (`azurite-live`). Serves historical OH
 
 Route prefix: `api` (default).
 
-**`GET|POST /api/GetOHLCByYearAndMonth`**
+**`GET|POST /api/GetOHLCByYearAndMonth`** ⚠️ **likely broken against current data** — see note below.
 
 | Query param | Meaning |
 |---|---|
@@ -19,7 +19,7 @@ Route prefix: `api` (default).
 curl "http://localhost:8092/api/GetOHLCByYearAndMonth?year=2026&month=08&exchange=nse&instrumentName=nifty-50"
 ```
 
-**`GET|POST /api/GetOHLCDataByDate`**
+**`GET|POST /api/GetOHLCDataByDate`** ⚠️ **likely broken against current data** — see note below.
 
 | Query param | Meaning |
 |---|---|
@@ -31,11 +31,46 @@ curl "http://localhost:8092/api/GetOHLCByYearAndMonth?year=2026&month=08&exchang
 curl "http://localhost:8092/api/GetOHLCDataByDate?date=2026-08-03&exchange=nse&instrumentName=nifty-50"
 ```
 
+> **Both routes above build blob paths as `{basePath}/{year}/{month}/{blobName}.csv` — no day folder.**
+> `DataAvailableTill` (below) confirms the real, current blob layout has one CSV *per day*:
+> `exchanges/nfo/futures/indices/2026/8/4/BANKNIFTY26AUGFUT.csv`. These two routes predate that
+> layout (or the layout changed under them) and most likely 404 against real data today.
+> `HistoricalSufficiency` (below) is built on the confirmed-current day-folder layout — treat that
+> one as the reliable reference if you need to reconcile these.
+
 **`GET|POST /api/DataAvailableTill`** — no params, returns the latest available date per exchange.
 
 ```bash
 curl "http://localhost:8092/api/DataAvailableTill"
 ```
+
+**`GET|POST /api/HistoricalSufficiency`** — "does Azurite have enough history for this instrument?"
+(`WARMUP_AND_INDICATOR_PLAN.md` section 2d). Existence-only — checks whether each required trading
+day's blob is present, not whether its content has a full session's worth of bars. Walks backward
+from the day before `asOf` (default: today, IST), skipping weekends only — no holiday-calendar
+awareness, since this service has no Redis dependency and adding one just for this would be new
+coupling; a holiday just shows up as "missing," which is technically true from Azurite's side.
+
+| Query param | Meaning |
+|---|---|
+| `exchange` | `nse` or `nfo` |
+| `instrumentName` | e.g. `nifty-50`, `BANKNIFTY` |
+| `daysNeeded` | how many trading days of history are required |
+| `asOf` | optional, `yyyy-MM-dd`, defaults to today (IST) |
+
+```bash
+curl "http://localhost:8092/api/HistoricalSufficiency?exchange=nse&instrumentName=nifty-50&daysNeeded=20"
+curl "http://localhost:8092/api/HistoricalSufficiency?exchange=nfo&instrumentName=BANKNIFTY&daysNeeded=20&asOf=2026-08-07"
+```
+
+For NFO, the contract name is recomputed **per day checked**, not once for `asOf` — a futures
+contract name is month-specific (`BANKNIFTY26AUGFUT` for August), so a lookback window crossing a
+month boundary needs each day's own contract name or the earlier month's days would be silently
+checked against the wrong (current month's) contract and always read as missing.
+
+Designed as a reusable capability, not a private step of `WarmUpService` — a `StrategyService`
+deploy-time "insufficient history" warning and `Backtest` will want the same question answered
+later (see the plan doc's Parked section).
 
 ## Operations
 
