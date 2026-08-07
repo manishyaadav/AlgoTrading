@@ -59,8 +59,16 @@ hours without breaking the controls.
 
 | Token | Moves with | Carries | Used by |
 |---|---|---|---|
-| `--phase` | the trading day | atmosphere, session state | page wash, mark glyph, section icon, console eyebrow / rail fill / now-rule / current gate |
+| `--phase` | the trading day | atmosphere, session state | page wash, mark glyph, section icon, console eyebrow, now-rule, current gate |
 | `--accent` | nothing — fixed indigo | interaction | focus rings, active nav, hover borders, links, `.btn-primary`, card icons |
+
+**Rail/track fill is neither of these — it's a third, fixed vocabulary: `--jade`/`--green`
+(arrived), `--ember`/`--red` (missing), `--rule`/`--border` (pending).** An earlier version of
+this table listed "rail fill" under `--phase`, and the code briefly matched it — arrived bars
+shifted color with session mood. That's wrong on its own terms: whether a bar of data arrived is a
+fact about the pipeline, not about the market's mood, and tying it to `--phase` meant it looked
+different at 9am than at 2pm for no reason connected to the data itself. See
+`pages/data.md`/`pages/home.md`'s per-bucket rail sections.
 
 `--phase` maps from `data-phase` on `<html>`, set by `applyPhase()` (dashboard) and `render()`
 (console), from the same country + exchange + services payloads:

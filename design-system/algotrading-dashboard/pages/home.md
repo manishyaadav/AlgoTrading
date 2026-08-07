@@ -63,35 +63,48 @@ dashboard's numeric columns, which is the one deliberate thread between the two 
 ## The signature element
 
 The **session ribbon**: one rail per contract per timeframe, all sharing a single 09:15→15:30
-axis, with one vertical `now` rule cutting through every rail. Filled = bars ingested, ember =
-the shortfall against the backend's `ExpectedSoFar()`, dim = the rest of the session. A contract
-falling behind its neighbours is visible without reading a number.
+axis, with one vertical `now` rule cutting through the whole ribbon. Jade = bars ingested, ember =
+buckets expected by now that genuinely aren't there, dim = the rest of the session not due yet. A
+contract falling behind its neighbours is visible without reading a number — and, as of the
+per-bucket rewrite below, so is exactly *where* in the day it fell behind.
 
-Rails are three stacked full-width tick layers clipped with `clip-path: inset(...)`. Keeping every
-layer full width is what locks the tick period to the axis instead of stretching it with the fill —
-don't reimplement this by sizing the fill element's width. Below 760px the 375-tick period falls
-under a device pixel, so `.layer` drops to a solid bar.
+Rails went through two designs. The first was three stacked full-width tick layers, `count`-many
+ticks clipped as one contiguous green run from the start, one contiguous ember gap after it. That's
+an aggregate approximation — a Redis SET's cardinality has no position, only membership — and it
+breaks visibly the moment a day isn't shaped "healthy, then behind": an outage in the middle of an
+otherwise-fine day rendered as one trailing gap wherever the arithmetic happened to put it, never
+where the real hole was, and recolored every already-arrived bar for as long as the aggregate ratio
+stayed low regardless of how well things were actually going by the time you looked.
 
-Rails are **updated in place** between polls, never rebuilt — the `clip-path` transition needs the
-same element or the fill jumps. Same reason the route cards are built once: re-rendering the grid
-every 5s would throw away keyboard focus.
+**`.track__map` now paints real per-bucket ground truth.** The backend's `bucketMap` (`Program.cs`,
+shared with the Data page) is one character per expected bucket — `'a'` arrived, `'m'` missing,
+`'p'` not due — read from the count SET's actual *members* (each one is that bucket's own
+`WindowsStartTime`), not just its length. `bucketMapGradient()` (`home.js`) turns that into a
+run-length-encoded `linear-gradient` — one color-stop pair per state *transition*, not per bucket —
+set as `.track__map`'s `background-image`. The tick rhythm is a separate `mask-image` on
+`.track__map`, sized to `calc(100% / var(--bars))`, independent of color. Below 760px, drop the
+mask (`mask-image: none`) rather than the old clip-path fallback.
 
-**`.layer--fill` never keys off `.track--behind`.** It used to (`.track--behind .layer--fill` and
-`.track--thin.track--behind .layer--fill` both forced it to `--ember`), which retroactively
-repainted every already-ingested bar red the moment the aggregate ratio dipped, then flipped the
-whole run back a few seconds later once the backend caught up — on the session ribbon that meant
-several contracts' worth of already-correct bars flashing red together for no real reason. The gap
-layer already carries the "behind" signal on its own, for exactly the bars that are actually
-missing. Same fix, same reasoning, as the Data page's `.rail-layer.fill` — see `pages/data.md`'s
-"Status colour never repaints arrived data".
+Three fixed colors, never a status- or session-driven palette: arrived is **always** `--jade`,
+missing is **always** `--ember`, pending is **always** `--rule`. Two things this replaces, both
+real bugs that shipped:
 
-**Fill is one color, `--phase`, full stop — not `--phase` for the 1-min row and `--jade` for
-`.track--thin` (aggregation) rows.** That split meant the legend's single amber "ingested" swatch
-(`.key--fill { background: var(--phase); }`) was only ever true for one row out of eight; every
-aggregated timeframe rendered green while claiming to match an amber legend key. `--phase` is also
-what MASTER.md's phase table always said should drive "rail fill" — the `--jade` override was the
-inconsistency, not the fix. `--jade` is still a real token, just no longer used here; it still
-colors `.card__stat--ok`.
+- **`.track--behind` used to force the whole fill to `--ember`** whenever the aggregate ratio
+  dipped, retroactively repainting every already-ingested bar as if it were a problem — several
+  contracts' worth of correct bars flashing red together for no real reason, then flipping back a
+  few seconds later once the backend caught up. Not representable the same way anymore: color is
+  now a property of each bucket's own arrived/missing state, not an aggregate applied to the whole
+  element.
+- **Fill used to be `--phase`** (shifting with session mood — indigo pre-open, amber during open,
+  muted after close) **for the 1-min row, `--jade` for `.track--thin` (aggregation) rows.** Two
+  colors for one fact, and the legend's single "ingested" swatch only ever matched one row out of
+  eight. `--phase` is for chrome that should move with the trading day — the page wash, the mark —
+  not for "this data arrived," which doesn't stop being true because the market closed. `--jade` is
+  fixed now, matching the Data page's `--green`. See `pages/data.md`'s "Three fixed colors."
+
+Rails are **updated in place** between polls, never rebuilt — the same element needs to persist for
+`background-image` to have any chance of transitioning smoothly, and for the same reason the route
+cards are built once: re-rendering the grid every 5s would throw away keyboard focus.
 
 ## Rules for this page
 

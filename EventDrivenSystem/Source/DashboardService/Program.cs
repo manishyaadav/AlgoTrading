@@ -324,14 +324,37 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
     string countKeyPrefix, Func<string, string> snapshotKeyBuilder, string? provider = null)
 {
     var db = redis.GetDatabase();
-    var today = IstNow().ToString("yyyy-MM-dd");
+    var now = IstNow();
+    var today = now.ToString("yyyy-MM-dd");
 
+    // The SET's members are each arrived bucket's own WindowsStartTime (see NotificationService's
+    // DataIngestionNotificationFunctions/DataAggregationNotificationFunctions) — real per-bucket
+    // ground truth, not just a count. Reading the members (not just the cardinality) is what makes
+    // the bucket map below possible.
     var countKey = $"{countKeyPrefix}:{ticker}:{timeframeMinutes}min:{today}";
-    long count = await db.SetLengthAsync(countKey);
+    RedisValue[] members = await db.SetMembersAsync(countKey);
+    var arrived = new HashSet<string>(members.Select(m => (string)m!));
+    long count = arrived.Count;
     bool inRedis = count > 0;
 
     int expectedTotal = 375 / timeframeMinutes; // 375 one-minute bars in a 9:15-3:30 session
     int expectedSoFar = ExpectedSoFar(timeframeMinutes, expectedTotal);
+
+    // Per-bucket ground truth for the rail: which *specific* buckets landed, not just how many.
+    // A simple "first N ticks are fill" model can't represent an outage in the middle of an
+    // otherwise-healthy day — it just shows one big trailing gap regardless of where the actual
+    // hole is. Bucket starts are anchored to session open exactly like
+    // RunningBucket.FloorToBucketStart aligns them on the aggregator side, so this lines up
+    // bucket-for-bucket with reality.
+    var open = now.Date.AddHours(9).AddMinutes(15);
+    var bucketMap = new char[expectedTotal];
+    for (int i = 0; i < expectedTotal; i++)
+    {
+        var bucketStart = open.AddMinutes(i * timeframeMinutes);
+        bool isArrived = arrived.Contains(bucketStart.ToString("yyyy-MM-ddTHH:mm:ss"));
+        bool isDue = bucketStart.AddMinutes(timeframeMinutes) <= now;
+        bucketMap[i] = isArrived ? 'a' : isDue ? 'm' : 'p';
+    }
 
     // Latest snapshot, for display — separate key from the count SET above.
     RedisValue snapshot = await db.StringGetAsync(snapshotKeyBuilder(ticker));
@@ -348,13 +371,13 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
     }
 
     double? latestAgeSeconds = DateTime.TryParse(updatedOn, out var updatedOnParsed)
-        ? (IstNow() - updatedOnParsed).TotalSeconds
+        ? (now - updatedOnParsed).TotalSeconds
         : null;
     string status = ComputeStatus(count, expectedSoFar, latestAgeSeconds, timeframeMinutes);
 
     bool inAzurite = await CheckAzurite(ohlcClient, ticker, today);
 
-    return new CandleCountStatus(ticker, timeframeMinutes, (int)count, expectedTotal, expectedSoFar, status, inRedis, inAzurite, latestWindowStartTime, updatedOn, provider);
+    return new CandleCountStatus(ticker, timeframeMinutes, (int)count, expectedTotal, expectedSoFar, status, inRedis, inAzurite, latestWindowStartTime, updatedOn, provider, new string(bucketMap));
 }
 
 static int ExpectedSoFar(int intervalMinutes, int expectedTotal)
@@ -510,4 +533,5 @@ record CandleCountStatus(
     bool InAzurite,
     string? LatestWindowStartTime,
     string? UpdatedOn,
-    string? Provider); // null for aggregation entries — the concept only exists on the ingestion side today
+    string? Provider, // null for aggregation entries — the concept only exists on the ingestion side today
+    string BucketMap); // one char per expected bucket, index 0 = session open: 'a' arrived, 'm' missing (expected by now, isn't there — a genuine gap), 'p' not due yet
