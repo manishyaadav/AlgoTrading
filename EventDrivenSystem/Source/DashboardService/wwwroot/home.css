@@ -440,11 +440,16 @@ a { color: inherit; }
 }
 .layer--rest { color: var(--rule); }
 .layer--gap  { color: var(--ember); clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); opacity: 0.55; }
-.layer--fill { color: var(--phase); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
 
-.track--behind .layer--fill { color: var(--ember); }
-.track--thin   .layer--fill { color: var(--jade); }
-.track--thin.track--behind .layer--fill { color: var(--ember); }
+/* Fill is ground truth — "this bar arrived" — and never keys off .track--behind.
+   It used to (both here and the un-thin default), which retroactively repainted
+   every already-ingested bar ember the moment the aggregate ratio dipped, then
+   flipped the whole run back a few seconds later once it caught up. The gap
+   layer above already carries the "behind" signal on its own, for exactly the
+   bars that are actually missing — see the Data page's identical fix,
+   design-system/algotrading-dashboard/pages/data.md. */
+.layer--fill { color: var(--phase); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
+.track--thin .layer--fill { color: var(--jade); }
 
 /* Under ~760px a 375-tick period falls below a device pixel and turns to mush —
    drop to a solid bar, which reads the same at a glance. */
