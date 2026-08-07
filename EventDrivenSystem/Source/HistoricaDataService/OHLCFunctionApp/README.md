@@ -6,7 +6,7 @@ Read-only HTTP API backed by blob storage (`azurite-live`). Serves historical OH
 
 Route prefix: `api` (default).
 
-**`GET|POST /api/GetOHLCByYearAndMonth`** ⚠️ **likely broken against current data** — see note below.
+**`GET|POST /api/GetOHLCByYearAndMonth`**
 
 | Query param | Meaning |
 |---|---|
@@ -19,7 +19,7 @@ Route prefix: `api` (default).
 curl "http://localhost:8092/api/GetOHLCByYearAndMonth?year=2026&month=08&exchange=nse&instrumentName=nifty-50"
 ```
 
-**`GET|POST /api/GetOHLCDataByDate`** ⚠️ **likely broken against current data** — see note below.
+**`GET|POST /api/GetOHLCDataByDate`**
 
 | Query param | Meaning |
 |---|---|
@@ -31,25 +31,30 @@ curl "http://localhost:8092/api/GetOHLCByYearAndMonth?year=2026&month=08&exchang
 curl "http://localhost:8092/api/GetOHLCDataByDate?date=2026-08-03&exchange=nse&instrumentName=nifty-50"
 ```
 
-> **Both routes above build blob paths as `{basePath}/{year}/{month}/{blobName}.csv` — no day folder.**
-> `DataAvailableTill` (below) confirms the real, current blob layout has one CSV *per day*:
-> `exchanges/nfo/futures/indices/2026/8/4/BANKNIFTY26AUGFUT.csv`. These two routes predate that
-> layout (or the layout changed under them) and most likely 404 against real data today.
-> `HistoricalSufficiency` (below) is built on the confirmed-current day-folder layout — treat that
-> one as the reliable reference if you need to reconcile these.
+> **Blob layout has two tiers, and both routes above correctly use the permanent one.** For the
+> current month, day-level folders (`{year}/{month}/{day}/{blobName}.csv`) hold that day's data —
+> but they're transient, purged once the month completes. The same-named file directly under the
+> month folder (`{year}/{month}/{blobName}.csv`, no day segment — what these two routes and
+> `HistoricalSufficiency` below all read) is cumulative for the whole month and is the permanent
+> record, kept forever. `DataAvailableTill` (below) walks the day-level folders, so it only ever
+> reflects the last few days, not full history — don't use it to conclude older data is missing.
 
-**`GET|POST /api/DataAvailableTill`** — no params, returns the latest available date per exchange.
+**`GET|POST /api/DataAvailableTill`** — no params, returns the latest available date per exchange
+by walking the current month's day-level folders. Since those are transient (see above), this
+tells you how fresh things are, not how much history exists — that's `HistoricalSufficiency` below.
 
 ```bash
 curl "http://localhost:8092/api/DataAvailableTill"
 ```
 
 **`GET|POST /api/HistoricalSufficiency`** — "does Azurite have enough history for this instrument?"
-(`WARMUP_AND_INDICATOR_PLAN.md` section 2d). Existence-only — checks whether each required trading
-day's blob is present, not whether its content has a full session's worth of bars. Walks backward
-from the day before `asOf` (default: today, IST), skipping weekends only — no holiday-calendar
-awareness, since this service has no Redis dependency and adding one just for this would be new
-coupling; a holiday just shows up as "missing," which is technically true from Azurite's side.
+(`WARMUP_AND_INDICATOR_PLAN.md` section 2d). Existence-only, checked against the monthly rollup
+blob (see above) — confirms the month's file exists, not that the specific required day's data is
+inside it (bar/date-level completeness within a month would be a separate, deeper check). Walks
+backward from the day before `asOf` (default: today, IST), skipping weekends only — no
+holiday-calendar awareness, since this service has no Redis dependency and adding one just for
+this would be new coupling; a holiday just shows up as "missing," which is technically true from
+Azurite's side.
 
 | Query param | Meaning |
 |---|---|
@@ -66,7 +71,8 @@ curl "http://localhost:8092/api/HistoricalSufficiency?exchange=nfo&instrumentNam
 For NFO, the contract name is recomputed **per day checked**, not once for `asOf` — a futures
 contract name is month-specific (`BANKNIFTY26AUGFUT` for August), so a lookback window crossing a
 month boundary needs each day's own contract name or the earlier month's days would be silently
-checked against the wrong (current month's) contract and always read as missing.
+checked against the wrong (current month's) contract and always read as missing. Days that land in
+the same month resolve to the same blob and are checked once, not once per day.
 
 Designed as a reusable capability, not a private step of `WarmUpService` — a `StrategyService`
 deploy-time "insufficient history" warning and `Backtest` will want the same question answered

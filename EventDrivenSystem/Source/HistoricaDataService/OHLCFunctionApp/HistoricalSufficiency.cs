@@ -25,10 +25,14 @@ namespace OHLCFunctionApp
         }
 
         /// <summary>
-        /// Existence-only: checks whether each required trading day's blob is present, not
-        /// whether its content actually has a full session's worth of bars. Cheap (no
-        /// download/parse needed, just a blob existence check) and matches the plan's stated
-        /// scope; bar-count completeness would be a separate, deeper check if ever needed.
+        /// Existence-only, checked against the monthly rollup blob (`{year}/{month}/{blobName}.csv`),
+        /// not the day-level folders alongside it. Those day folders hold the current month's data
+        /// broken out per day, but they're transient — purged once the month completes — while the
+        /// same-named file directly under the month folder is cumulative for that whole month and
+        /// is the permanent record. Checking day-level paths would silently read as "missing" for
+        /// any completed month. This does not confirm the target day's data is actually *inside*
+        /// the monthly file, only that the file exists — bar/date-level completeness within a
+        /// month would be a separate, deeper (content-parsing) check if ever needed.
         ///
         /// Trading days = weekdays only, walking backward from the day before `asOf` (today's own
         /// data isn't warm-up history — it's what today's live session produces, so it's
@@ -82,6 +86,15 @@ namespace OHLCFunctionApp
             // rather than a real expected bound.
             var oldestAllowed = asOf.Date.AddDays(-(daysNeeded * 3 + 30));
 
+            // Per-month rollup, not per-day: the blob layout keeps a same-named file directly
+            // under {year}/{month}/ containing every day of that month, cumulative and updated
+            // live for the current month, permanent once the month completes — the day-level
+            // folders alongside it are transient (current month only) and get purged after
+            // month-end, so they can't be relied on for anything but the last few days. Every day
+            // that falls in the same month resolves to the same blob; memoized so a lookback
+            // window doesn't hit Azurite once per day for what's really one existence check.
+            var monthExistsCache = new Dictionary<string, bool>();
+
             while (checkedCount < daysNeeded && cursor >= oldestAllowed)
             {
                 if (cursor.DayOfWeek != DayOfWeek.Saturday && cursor.DayOfWeek != DayOfWeek.Sunday)
@@ -91,9 +104,14 @@ namespace OHLCFunctionApp
                     // month boundary needs each day's own contract name, not one fixed name that
                     // would be silently wrong for the earlier month's days.
                     string blobName = GetBlobName(cursor, exchangeName, instrumentName);
-                    string fullPath = $"{basePath}{cursor.Year}/{cursor.Month}/{cursor.Day}/{blobName}.csv";
-                    var blobClient = container.GetBlobClient(fullPath);
-                    bool exists = await blobClient.ExistsAsync();
+                    string fullPath = $"{basePath}{cursor.Year}/{cursor.Month}/{blobName}.csv";
+
+                    if (!monthExistsCache.TryGetValue(fullPath, out bool exists))
+                    {
+                        var blobClient = container.GetBlobClient(fullPath);
+                        exists = await blobClient.ExistsAsync();
+                        monthExistsCache[fullPath] = exists;
+                    }
 
                     days.Add(new TradingDayAvailability(cursor.ToString("yyyy-MM-dd"), exists, fullPath));
                     checkedCount++;
