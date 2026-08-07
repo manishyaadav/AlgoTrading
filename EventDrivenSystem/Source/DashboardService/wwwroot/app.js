@@ -1,5 +1,14 @@
 const REFRESH_MS = 5000;
 
+// Strategy API base — must be declared before the initial showPage() call
+// below (landing directly on #strategy runs loadStrategyGrid() synchronously
+// during page load, which reads this). It used to be declared much further
+// down, past that call, which threw "Cannot access before initialization"
+// on every cold load of the Strategy page. Uses the current page's hostname
+// rather than a hardcoded "localhost" so this also works when the dashboard
+// is opened from another device on the LAN (e.g. a phone) via its IP.
+const STRATEGY_API_BASE = `${location.protocol}//${location.hostname}:8096`;
+
 // --- Live IST clock in the header (matches home.html's .stamp) ---
 const IST_FMT = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Kolkata",
@@ -25,7 +34,6 @@ const ICONS = {
   gauge: `<path d="M12 12l4-3"/><circle cx="12" cy="12" r="9"/><path d="M7 15a6 6 0 0 1 10 0"/>`, // Dashboard
   bolt: `<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"/>`,  // Function apps (dataingestion/holiday/ohlc/country/exchange/aggregation/notification)
   graph: `<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8 7l7-1M8.5 8l3 8M15.5 8l-3 8"/>`,
-  freshness: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>`,
   sun: `<circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.5 12h-3M22.5 12h-3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>`,
   moon: `<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>`,
   columns: `<rect x="3" y="4" width="6" height="16" rx="1"/><rect x="9.5" y="4" width="6" height="16" rx="1"/><rect x="16" y="4" width="5" height="16" rx="1"/>`,
@@ -173,15 +181,6 @@ document.getElementById("orientation-toggle").addEventListener("click", () => {
 });
 
 renderOrientationToggle();
-
-function formatAge(seconds) {
-  if (seconds === null || seconds === undefined) return "—";
-  if (seconds < 0) seconds = 0;
-  if (seconds < 60) return `${Math.round(seconds)}s ago`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
-  return `${Math.round(seconds / 86400)}d ago`;
-}
 
 function stateClass(state) {
   if (state === "running") return "running";
@@ -427,60 +426,6 @@ function drawConnections(services) {
 // Redis writes these as IST-local strings with no zone suffix, so `new Date()`
 // would re-read them in the viewer's timezone and shift every row. Slice the
 // parts out instead — same reasoning as clockTime() on the Data page.
-function stampTime(iso) {
-  if (!iso) return "—";
-  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
-  return m ? `${m[3]}/${m[2]} ${m[4]}` : String(iso);
-}
-
-// The backend calls a key stale once its age passes 2x its own timeframe, so a
-// 1-min key and a 60-min key are held to different clocks. The bar shows age
-// against that key's own threshold, which is the only comparison that means
-// anything across a mixed table.
-function ageCellHtml(i) {
-  const label = esc(formatAge(i.ageSeconds));
-  const minutes = Number.parseInt(i.timeframe, 10);
-  const thresholdSeconds = (Number.isFinite(minutes) && minutes > 0 ? minutes : 1) * 60 * 2;
-
-  if (i.ageSeconds === null || i.ageSeconds === undefined) return label;
-
-  const pct = Math.max(0, Math.min(100, (i.ageSeconds / thresholdSeconds) * 100));
-  return `
-    <span class="age">
-      <span class="age-label">${label}</span>
-      <span class="age-rail" style="--pct:${pct}%" role="img"
-            aria-label="${Math.round(pct)}% of the ${Math.round(thresholdSeconds / 60)} minute stale threshold"></span>
-    </span>`;
-}
-
-async function loadFreshness() {
-  const tbody = document.querySelector("#freshness tbody");
-  try {
-    const res = await fetch("/api/freshness");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = await res.json();
-
-    if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="7">No cached data yet — nothing has flowed through the pipeline.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = items.map(i => `
-      <tr class="${i.isStale ? "row-stale" : ""}">
-        <td>${esc(i.category)}</td>
-        <td class="cell-key">${esc(i.ticker ?? "—")}</td>
-        <td>${esc(i.dataType ?? "—")}</td>
-        <td class="num">${esc(i.timeframe ?? "—")}</td>
-        <td class="num">${esc(stampTime(i.updatedOn))}</td>
-        <td class="num">${ageCellHtml(i)}</td>
-        <td><span class="pill ${i.isStale ? "stale" : "fresh"}">${i.isStale ? "Stale" : "Fresh"}</span></td>
-      </tr>
-    `).join("");
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error">Unable to load freshness data: ${err.message}</td></tr>`;
-  }
-}
-
 // --- Exchanges page: country gate + exchange session timeline ---
 
 const EXCHANGE_STAGES = [
@@ -620,7 +565,65 @@ function computePhase() {
 }
 
 function applyPhase() {
-  document.documentElement.setAttribute("data-phase", computePhase());
+  const phase = computePhase();
+  document.documentElement.setAttribute("data-phase", phase);
+  renderHeaderStatus(phase);
+}
+
+// Header status pill (visible on every page, between the mark and the clock).
+// Same lastCountry/lastExchanges computePhase() already has — no extra request.
+// Phrased like the console's verdict ("Normal Day · Session Over (NSE, NFO)"):
+// day state first (Normal/Holiday/Weekend/not gated), then what the session is
+// doing right now, then which exchanges that covers — never a fixed list, just
+// whatever exchange-live has actually reported. "closed" already covers the
+// full 15:30→midnight window (istMinuteOfDay runs 0-1439; nothing resets it
+// early) — it only stops applying once the calendar date rolls over and
+// country-live re-gates the new day, same as every other "isToday" check here.
+function renderHeaderStatus(phase) {
+  const textEl = document.getElementById("header-status-text");
+  const pillEl = document.getElementById("header-status");
+  if (!textEl || !pillEl) return;
+
+  const c = lastCountry;
+  const exchangeNames = lastExchanges.map(e => e.exchangeName).join(", ");
+  const suffix = exchangeNames ? ` (${exchangeNames})` : "";
+
+  let text, title;
+
+  if (phase === "down") {
+    text = "Service Issue";
+    title = "One or more containers are not running — see Services & Connections";
+  } else if (!c || !c.found) {
+    text = "Not Gated Yet";
+    title = "country-live hasn't run since this stack started";
+  } else if (!c.isToday) {
+    text = `${c.state} Day · Stale`;
+    title = `Country state last set ${c.date}, not today`;
+  } else if (c.state === "Holiday") {
+    text = `Holiday${suffix}`;
+    title = c.holiday ? `${c.holiday.reason} (${c.holiday.date})` : "Holiday — no session today";
+  } else if (c.state === "Weekend") {
+    text = `Weekend${suffix}`;
+    title = "No session — weekend";
+  } else if (phase === "pre") {
+    text = `Normal Day Session Starts Soon${suffix}`;
+    title = "Opens at 09:15 IST";
+  } else if (phase === "late") {
+    text = `Normal Day Pre-Close${suffix}`;
+    title = "Closes at 15:30 IST";
+  } else if (phase === "closed") {
+    text = `Normal Day Session Over${suffix}`;
+    title = "Session ended at 15:30 IST";
+  } else if (exchangeNames) {
+    text = `Normal Day Market Open${suffix}`;
+    title = "Session runs 09:15–15:30 IST";
+  } else {
+    text = "Normal Day · No Exchange Data";
+    title = "No exchange has reported yet";
+  }
+
+  textEl.textContent = text;
+  pillEl.title = title;
 }
 
 // --- Data page: ingestion + aggregation candle-count status, per contract ---
@@ -635,6 +638,28 @@ function clockTime(iso) {
   if (!iso) return "—";
   const m = String(iso).match(/T(\d{2}:\d{2}:\d{2})/);
   return m ? m[1] : String(iso);
+}
+
+// Non-hardcoded color per instrument — same ticker always gets the same
+// --tag-N across both Ingestion and Aggregation cards, without ever mapping a
+// specific ticker name to a specific color (this app discovers tickers
+// dynamically; a hand-maintained map would silently miss new ones, the same
+// trap the old Services page CATEGORIES color scheme fell into).
+//
+// Assigned in first-discovery order (not hashed) and cached for the page's
+// lifetime: a hash has no collision guarantee — BANKNIFTY and NIFTY landed on
+// the identical tag under a straightforward string hash — while first-seen
+// ordinal assignment guarantees every distinct ticker gets its own color as
+// long as there are no more than INSTRUMENT_TAGS of them on screen at once,
+// which covers every contract list this dashboard has ever shown.
+const INSTRUMENT_TAGS = 5;
+const instrumentTagByName = new Map();
+function instrumentColorVar(name) {
+  const key = String(name || "");
+  if (!instrumentTagByName.has(key)) {
+    instrumentTagByName.set(key, (instrumentTagByName.size % INSTRUMENT_TAGS) + 1);
+  }
+  return `var(--tag-${instrumentTagByName.get(key)})`;
 }
 
 function candleStatusCardHtml(item) {
@@ -664,7 +689,7 @@ function candleStatusCardHtml(item) {
     <div class="candle-row">
       <div class="candle-row-head">
         <div>
-          <span class="candle-row-name">${esc(item.contract)}</span>
+          <span class="candle-row-name" style="color:${instrumentColorVar(item.contract)}">${esc(item.contract)}</span>
           <span class="candle-tf">${item.timeframe}m</span>
         </div>
         <div>
@@ -714,7 +739,6 @@ function loadAggregationStatus() {
 async function refresh() {
   await Promise.all([
     loadServices(),
-    loadFreshness(),
     loadCountryStatus(),
     loadExchangeTimelines(),
     loadIngestionStatus(),
@@ -730,9 +754,6 @@ refresh();
 setInterval(refresh, REFRESH_MS);
 
 // --- Strategy page (talks to strategy-live's published port directly from the browser) ---
-// Uses the current page's hostname rather than a hardcoded "localhost" so this also works
-// when the dashboard is opened from another device on the LAN (e.g. a phone) via its IP.
-const STRATEGY_API_BASE = `${location.protocol}//${location.hostname}:8096`;
 
 // Fixed choices per the current spec. Exchange/Risk are hardcoded outright (shown disabled);
 // the rest are closed lists for now — expand these arrays as the product grows.
@@ -866,11 +887,11 @@ function ruleRowHtml(rule, index, key) {
 
 // One <div class="rules-section"> block: a header with an "+ Add Rule" button and a list container.
 // `key` must match what ruleSections[] is keyed by and what the Add/Remove buttons carry in data-key.
-function ruleSectionBlockHtml(key, title) {
+function ruleSectionBlockHtml(key, title, titleClass = "rules-section-title") {
   return `
     <div class="rules-section">
       <div class="rules-section-head">
-        <div class="view-label">${esc(title)}</div>
+        <div class="${titleClass}">${esc(title)}</div>
         <button type="button" class="btn rule-add-btn" data-key="${key}">+ Add Rule</button>
       </div>
       <div class="rule-list" data-key="${key}"></div>
@@ -978,10 +999,10 @@ function describeRule(r) {
     (r.link ? ` <span class="rule-link-tag">${esc(r.link)}</span>` : "");
 }
 
-function ruleListReadonlyHtml(title, rules) {
+function ruleListReadonlyHtml(title, rules, titleClass = "rules-section-title") {
   return `
     <div class="rules-section">
-      <div class="view-label">${esc(title)}</div>
+      <div class="${titleClass}">${esc(title)}</div>
       ${rules && rules.length
         ? rules.map(r => `<div class="rule-readonly">${describeRule(r)}</div>`).join("")
         : `<div class="hint">No rules defined.</div>`}
@@ -1111,10 +1132,10 @@ function renderStrategyViewPanel(id, s) {
       <div class="view-field span-2"><div class="view-label">Goals</div><div class="chip-row">${(s.goals || []).map(g => `<span class="chip">${esc(g)}</span>`).join("") || "—"}</div></div>
       <div class="view-field span-2"><div class="view-label">Instruments</div><div class="chip-row">${(sub.instruments || []).map(i => `<span class="chip">${esc(i)}</span>`).join("") || "—"}</div></div>
     </div>
-    ${ruleListReadonlyHtml("Trading Session Rules", sub.tradingSessionRules)}
-    <div class="rules-group-label">Long Entry</div>
+    ${ruleListReadonlyHtml("Trading Session Rules", sub.tradingSessionRules, "rules-group-label rules-group-label--highlight")}
+    <div class="rules-group-label rules-group-label--highlight">Long Entry</div>
     ${LONG_ENTRY_SECTIONS.map(([, title, sourceField]) => ruleListReadonlyHtml(title, (sub.longEntry || {})[sourceField])).join("")}
-    <div class="rules-group-label">Short Entry</div>
+    <div class="rules-group-label rules-group-label--highlight">Short Entry</div>
     ${SHORT_ENTRY_SECTIONS.map(([, title, sourceField]) => ruleListReadonlyHtml(title, (sub.shortEntry || {})[sourceField])).join("")}
   `;
   document.getElementById("panel-edit-btn").addEventListener("click", () => openStrategyEdit(id));
@@ -1134,17 +1155,20 @@ function openStrategyNew() {
 }
 
 // Section keys used throughout: which EntryExitRule sub-array each maps to, on which side.
+// Titles don't repeat "Long Entry:"/"Short Entry:" — that's the enclosing
+// .rules-group-label--highlight's job (see renderStrategyViewPanel /
+// renderStrategyForm), and repeating it here is what these titles used to do.
 const LONG_ENTRY_SECTIONS = [
-  ["longEntryRules", "Long Entry: Entry Rules", "entryRules"],
-  ["longEntryRisk", "Long Entry: Risk Management Rules", "riskManagementRules"],
-  ["longEntryStopLoss", "Long Entry: Update Stop-Loss Rules", "updateStopLossRules"],
-  ["longEntryExit", "Long Entry: Exit Rules", "exitRules"],
+  ["longEntryRules", "Entry Rules", "entryRules"],
+  ["longEntryRisk", "Risk Management Rules", "riskManagementRules"],
+  ["longEntryStopLoss", "Update Stop-Loss Rules", "updateStopLossRules"],
+  ["longEntryExit", "Exit Rules", "exitRules"],
 ];
 const SHORT_ENTRY_SECTIONS = [
-  ["shortEntryRules", "Short Entry: Entry Rules", "entryRules"],
-  ["shortEntryRisk", "Short Entry: Risk Management Rules", "riskManagementRules"],
-  ["shortEntryStopLoss", "Short Entry: Update Stop-Loss Rules", "updateStopLossRules"],
-  ["shortEntryExit", "Short Entry: Exit Rules", "exitRules"],
+  ["shortEntryRules", "Entry Rules", "entryRules"],
+  ["shortEntryRisk", "Risk Management Rules", "riskManagementRules"],
+  ["shortEntryStopLoss", "Update Stop-Loss Rules", "updateStopLossRules"],
+  ["shortEntryExit", "Exit Rules", "exitRules"],
 ];
 
 function renderStrategyForm(id, existing) {
@@ -1222,12 +1246,12 @@ function renderStrategyForm(id, existing) {
       </div>
     </div>
 
-    ${ruleSectionBlockHtml("tradingSessionRules", "Trading Session Rules")}
+    ${ruleSectionBlockHtml("tradingSessionRules", "Trading Session Rules", "rules-group-label rules-group-label--highlight")}
 
-    <div class="rules-group-label">Long Entry</div>
+    <div class="rules-group-label rules-group-label--highlight">Long Entry</div>
     ${LONG_ENTRY_SECTIONS.map(([key, title]) => ruleSectionBlockHtml(key, title)).join("")}
 
-    <div class="rules-group-label">Short Entry</div>
+    <div class="rules-group-label rules-group-label--highlight">Short Entry</div>
     ${SHORT_ENTRY_SECTIONS.map(([key, title]) => ruleSectionBlockHtml(key, title)).join("")}
 
     <div id="form-status" class="hint"></div>
@@ -1374,5 +1398,3 @@ document.getElementById("strategy-panel").addEventListener("change", e => {
   }
 });
 // initial load, if the strategy grid is already the active page, is handled by showPage() above
-
-loadStrategyList();

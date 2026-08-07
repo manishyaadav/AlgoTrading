@@ -253,9 +253,10 @@ app.MapGet("/api/aggregation", async () =>
 {
     try
     {
-        // Starting with 5-min only for now — same shape extends to 10/15/30/60/75 later by adding
-        // more entries here, no other code changes needed.
-        int[] timeframes = { 5 };
+        // Every configured aggregation timeframe. The frontend already renders whatever
+        // comes back generically (timeframe badge, rail, expected-total math all derive
+        // from item.timeframe per card) — this array was the only thing scoping it to 5-min.
+        int[] timeframes = { 5, 10, 15, 30, 60, 75 };
         var results = new List<CandleCountStatus>();
 
         foreach (var tf in timeframes)

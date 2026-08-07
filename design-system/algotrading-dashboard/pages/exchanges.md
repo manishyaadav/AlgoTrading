@@ -36,6 +36,13 @@ each overwrites the same Redis key, so "current index" reliably implies every ea
 Connectors stay two-state (`done` up to the current stage) — a connector is the span *between*
 gates, and it's either crossed or it isn't.
 
+## Section titles
+
+"Country" and "Exchange Session Timeline" use `.rules-group-label--highlight`, same as the Data
+page's "Data Ingestion (1-min)" / "Aggregation" — see `pages/data.md`. Neither page has a
+per-subsection `h2`, so these carry the weight one would otherwise: Archivo, `--text`, an
+`--accent` dot and top rule, instead of the plain Fira Code eyebrow.
+
 ## Timestamps
 
 Redis stores `UpdatedOn` as an **IST-local string with no zone suffix**. Use `clockTime()`, which

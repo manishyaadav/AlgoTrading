@@ -364,12 +364,12 @@
 
   /* ── Value-change flash ────────────────────────────────────────────────── */
 
-  // Only values where a change is meaningful. The freshness Age column is
-  // deliberately absent: it ticks on every poll for every row, so flashing it
-  // would strobe the whole table twice a minute and mean nothing.
+  // Only values where a change is meaningful. Cells that tick on every poll
+  // regardless of real change (e.g. a live "updated Xs ago" timestamp) are
+  // deliberately absent — flashing those would strobe the page for nothing.
   const FLASH = [
     ".candle-count b", ".category-count b", ".track__count b",
-    ".card__stat b", ".summary b", ".widget__value", ".pill", ".card-status",
+    ".card__stat b", ".summary b", ".widget__value", ".card-status",
   ].join(",");
 
   const lastText = new WeakMap();

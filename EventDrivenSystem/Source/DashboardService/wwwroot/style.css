@@ -17,6 +17,18 @@
   --yellow-bg: rgba(255,180,74,0.15);
   --line: #35435c;
   --surface: color-mix(in srgb, var(--panel) 78%, transparent); /* translucent --panel, so top-level panels pick up the page wash */
+
+  /* Categorical palette — identity only, never status. For telling apart same-
+     type dynamic items (e.g. instrument/ticker names) at a glance; assigned by
+     hashing the item's name (see instrumentColorVar() in app.js), never
+     hand-mapped to a specific ticker. Cool hues, deliberately clear of
+     green/red/yellow (status) and accent (interactive). */
+  --tag-1: #22d3ee; /* cyan */
+  --tag-2: #a78bfa; /* violet */
+  --tag-3: #f472b6; /* pink */
+  --tag-4: #38bdf8; /* sky */
+  --tag-5: #2dd4bf; /* teal */
+
   font-family: "Inter Tight", -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 
   /* spacing scale — formalizes the app's existing 8/12/14/16/24/32px rhythm */
@@ -56,6 +68,13 @@
     --yellow: #9a5906;
     --yellow-bg: rgba(154,89,6,0.08);
     --line: #b9c2d4;
+
+    /* darker/more saturated than the dark-theme set — same AA reasoning as red above */
+    --tag-1: #0e7490;
+    --tag-2: #6d28d9;
+    --tag-3: #be185d;
+    --tag-4: #0369a1;
+    --tag-5: #0f766e;
   }
 }
 
@@ -78,6 +97,12 @@
   --yellow: #9a5906;
   --yellow-bg: rgba(154,89,6,0.08);
   --line: #b9c2d4;
+
+  --tag-1: #0e7490;
+  --tag-2: #6d28d9;
+  --tag-3: #be185d;
+  --tag-4: #0369a1;
+  --tag-5: #0f766e;
 }
 
 :root[data-theme="dark"] {
@@ -96,6 +121,12 @@
   --yellow: #ffb44a;
   --yellow-bg: rgba(255,180,74,0.15);
   --line: #35435c;
+
+  --tag-1: #22d3ee;
+  --tag-2: #a78bfa;
+  --tag-3: #f472b6;
+  --tag-4: #38bdf8;
+  --tag-5: #2dd4bf;
 }
 
 /* Same split as home.css: --phase moves with the trading day and carries
@@ -151,6 +182,8 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 20px 24px;
   border-bottom: 1px solid var(--border);
 }
@@ -177,20 +210,49 @@ header {
   stroke-linejoin: round;
 }
 
-.header-right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--muted); }
+.header-right { display: flex; align-items: center; flex-wrap: wrap; row-gap: 8px; gap: 18px; font-size: 13px; color: var(--muted); }
 
 .stamp {
   display: inline-flex;
   align-items: baseline;
+  flex-shrink: 0;
   gap: 8px;
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .stamp__time { color: var(--text); }
 .stamp__zone { font-size: 10px; letter-spacing: 0.14em; }
+
+/* Country/exchange status, visible on every page — the header-level answer to
+   "is the market open right now" without navigating to Exchanges. Sits between
+   the mark and the clock. Dot rides --phase, the same token driving the page
+   wash and the mark glyph, so it never disagrees with the rest of the chrome;
+   text comes from renderHeaderStatus() in app.js off the same country/exchange
+   payloads refresh() already polls every cycle on every page — no extra request. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 7px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.status-pill__dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--phase);
+  transition: background var(--motion-standard);
+}
 
 .bar__link {
   text-decoration: none;
@@ -532,37 +594,6 @@ th {
 tbody tr { transition: background var(--motion-fast); }
 tbody tr:hover { background: var(--panel); }
 
-/* --- Data Freshness --- */
-
-.cell-key { color: var(--text); }
-
-/* A stale row is called out by the pill; the tint is a scanning aid on top of
-   it, never the only signal. */
-.row-stale .cell-key { color: var(--red); }
-
-.age { display: inline-flex; align-items: center; gap: 8px; }
-.age-label { min-width: 58px; }
-
-/* Age against this key's own stale threshold — the session rail's idea at row
-   scale, so a key drifting toward stale is visible before it tips over. */
-.age-rail {
-  position: relative;
-  width: 46px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--border);
-  overflow: hidden;
-}
-.age-rail::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--pct, 0%);
-  background: var(--green);
-  transition: width var(--motion-standard), background var(--motion-standard);
-}
-.row-stale .age-rail::after { background: var(--red); }
-
 /* Monospace, tabular-figure styling for live-updating numeric/timestamp columns —
    prevents column width jitter as digit counts change. Opt-in via .num. */
 .num { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
@@ -570,16 +601,12 @@ tbody tr:hover { background: var(--panel); }
 /* Utility face — same monospace treatment home.css gives every number, label
    and eyebrow (table headers, small-caps labels, badges/pills, stat text). */
 th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
-.timeline-time, .pill, .badge, .storage-pill, .exchange-row-meta,
+.timeline-time, .badge, .storage-pill, .exchange-row-meta,
 .candle-count, .candle-tf, .rail-axis,
 .rule-row-title, .operand-label, .view-label, .form-field label {
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
-
-.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 500; letter-spacing: 0.08em; }
-.pill.fresh { background: var(--green-bg); color: var(--green); }
-.pill.stale { background: var(--red-bg); color: var(--red); }
 
 .error { color: var(--red); font-size: 13px; margin-bottom: 12px; }
 
@@ -761,7 +788,52 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   border-top: 1px solid var(--border);
 }
 
+/* Highlighted variant — top-level section titles within a page that carry
+   more weight than a regular eyebrow (there's no h2-per-subsection to lean
+   on, unlike a page boundary). Used by Data's "Data Ingestion (1-min)" /
+   "Aggregation", Exchanges' "Country" / "Exchange Session Timeline", and
+   Strategy's "Trading Session Rules" / "Long Entry" / "Short Entry". Opt-in
+   per label, not a redefinition of .rules-group-label itself. */
+.rules-group-label--highlight {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 110, "wght" 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+  border-top: 2px solid var(--accent);
+}
+.rules-group-label--highlight::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .rules-section { margin-bottom: 18px; }
+
+/* One tier below .rules-group-label--highlight: "Entry Rules", "Risk
+   Management Rules", etc. within a Long/Short Entry group. Same Archivo
+   treatment as .candle-row-name / .exchange-row-name — an item-level name,
+   not a form-field label, which is why this is its own class rather than
+   reusing the small-caps .view-field .view-label (that rule is scoped to
+   .view-field on purpose; a bare .view-label picking it up by cascade
+   accident is what made "Entry Rules" read as equally weighted with
+   "Trading Session Rules"/"Long Entry" above it, so every sub-heading had
+   to repeat "Long Entry:"/"Short Entry:" to stay legible on its own). */
+.rules-section-title {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 13.5px;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  margin-bottom: 8px;
+}
 
 .rules-section-head {
   display: flex;
@@ -769,7 +841,7 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.rules-section-head .view-label { margin-bottom: 0; }
+.rules-section-head .rules-section-title { margin-bottom: 0; }
 
 .rule-row {
   background: var(--bg);

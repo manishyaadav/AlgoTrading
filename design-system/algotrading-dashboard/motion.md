@@ -78,9 +78,9 @@ then feels identical at 60 and 144 Hz instead of running twice as fast on the fa
    fx-styled element on the console silently falls back — widget labels rendered at full text
    brightness instead of muted. If you add a token to one file, alias it in the other.
 
-2. **The value-flash allowlist deliberately excludes the freshness Age column.** It ticks on
-   every poll for every row; flashing it would strobe the whole table twice a minute and mean
-   nothing. Flash only where a change carries information.
+2. **The value-flash allowlist deliberately excludes anything that ticks every poll regardless
+   of real change** (a live "updated Xs ago" timestamp, for example) — flashing those would
+   strobe the page for nothing. Flash only where a change carries information.
 
 ## Component marks (console widgets)
 
