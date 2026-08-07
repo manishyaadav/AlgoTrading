@@ -371,9 +371,19 @@ static string ComputeStatus(long count, int expectedSoFar)
     // Before market open there's nothing to be behind on yet — that's "pending", not a warning.
     if (expectedSoFar <= 0) return count > 0 ? "green" : "pending";
 
-    var ratio = (double)count / expectedSoFar;
-    if (ratio >= 0.9) return "green";
-    if (ratio >= 0.5) return "amber";
+    // Absolute bucket gap, not a ratio. A ratio makes low-expectedTotal timeframes wildly
+    // over-sensitive to completely normal lag: 75-min only has 5 buckets in a session, so being
+    // a single bucket behind — which happens routinely right after every boundary, especially
+    // for the cascaded 10/15/30/60/75-min aggregators that wait on another aggregator's own
+    // bucket cycle before they can even start — is a 20% ratio drop and used to flip straight to
+    // amber. The same one-bucket lag on 1-min (375 buckets) barely moved its ratio at all. Gap-
+    // based thresholds treat "how many buckets behind" the same way regardless of how many
+    // buckets exist in total, which is what actually matters here.
+    long gap = expectedSoFar - count;
+
+    if (gap <= 1) return "green";       // routine processing lag, not a problem
+    if (count == 0) return "red";       // nothing has arrived at all this session
+    if (gap <= 3) return "amber";
     return "red";
 }
 

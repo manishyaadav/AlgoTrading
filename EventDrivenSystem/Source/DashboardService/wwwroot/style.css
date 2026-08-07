@@ -1101,11 +1101,16 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 }
 .rail-layer.rest { color: var(--border); }
 .rail-layer.gap  { color: var(--red); opacity: 0.5; clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); }
-.rail-layer.fill { color: var(--green); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
 
-.rail[data-status="amber"]   .rail-layer.fill { color: var(--yellow); }
-.rail[data-status="red"]     .rail-layer.fill { color: var(--red); }
-.rail[data-status="pending"] .rail-layer.fill { color: var(--muted); }
+/* Fill is ground truth — "this bar arrived" — and stays green regardless of the
+   card's aggregate status. It used to recolor amber/red along with data-status,
+   which retroactively repainted already-successfully-ingested bars as bad the
+   moment a *later* bucket's ratio dipped, then flipped them back a few seconds
+   later once it caught up. Data that already landed doesn't become wrong
+   because something after it is running late; the gap layer above already
+   carries that signal on its own, for exactly the bars that are actually
+   missing. See design-system/algotrading-dashboard/pages/data.md. */
+.rail-layer.fill { color: var(--green); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
 
 /* Where the session should have reached by now, per the backend's ExpectedSoFar. */
 .rail-now {

@@ -40,12 +40,33 @@ the axis. Sizing the fill element's `width` instead would stretch the ticks and 
 longer line up between rows. `background-size: calc(100% / var(--bars))` gives exactly `--bars`
 periods across the track.
 
-`.rail[data-status]` recolours the fill: `amber` → `--yellow`, `red` → `--red`, `pending` →
-`--muted`. Status comes from the backend's `ComputeStatus`, which compares against `ExpectedSoFar`
-— not against the full 375 — so "behind" only lights once it genuinely is.
-
 Below 760px the tick period drops under a device pixel, so `.rail-layer` falls back to a solid
 bar. Keep that media query if you change the rail.
+
+## Status colour never repaints arrived data
+
+`.rail-layer.fill` is **always** `--green`. It used to also key off `data-status` (`amber` →
+`--yellow`, `red` → `--red`), which sounds reasonable until you watch it happen live: the fill
+covers *every bar that has already arrived*, so recolouring it amber retroactively repaints
+successfully-ingested history as if it were a problem, then flips it back once the aggregate
+catches up a few seconds later. Bars that landed didn't become wrong because a *later* bucket is
+running behind.
+
+The shortfall is still fully visible — that's what `.rail-layer.gap` is for, and it only ever
+covers the bars that are actually missing, never the ones that arrived. The status badge (`On
+Track` / `Behind` / `Behind / No Data`) still carries the aggregate signal in text. Green fill +
+a red gap sliver + an amber badge is a coherent, honest picture: "this much data is here, this one
+bucket is short, and that's enough to call the timeframe behind" — not "all your data is bad now."
+
+`ComputeStatus` (`Program.cs`) also changed alongside this, from a ratio to an **absolute bucket
+gap** (`expectedSoFar - count`): ≤1 behind is `green`, 2-3 is `amber`, 4+ (or zero data all
+session) is `red`. A ratio made low-`expectedTotal` timeframes absurdly sensitive to completely
+normal lag — 75-min has only 5 buckets in a whole session, so being one bucket behind (which
+happens routinely right after every boundary, especially for the cascaded 10/15/30/60/75-min
+aggregators that wait on another aggregator's own bucket cycle before they can even start) is a
+20% ratio swing and used to flip straight to amber. The identical one-bucket lag on 1-min (375
+buckets) barely dented its ratio. A gap threshold treats "how many buckets behind" the same
+regardless of how many buckets exist in total, which is what actually matters.
 
 ## Row anatomy
 
@@ -96,6 +117,10 @@ from a section they're already inside, not a page-level heading.
 - [ ] The `<760px` solid-bar fallback survives
 - [ ] Shortfall stated in text (`N behind`), not by colour alone
 - [ ] Timestamps through `clockTime()`
+- [ ] `.rail-layer.fill` stays green regardless of status — never re-add a `data-status` color
+      override on it; arrived data doesn't retroactively become wrong
+- [ ] Status thresholds stay an absolute bucket gap, not a ratio — a ratio breaks every
+      low-`expectedTotal` timeframe (30/60/75-min) the same way it did before
 - [ ] Instrument color via `instrumentColorVar()`'s first-seen assignment, never a hash (no
       collision guarantee) or a hardcoded ticker→color map
 - [ ] `--tag-*` used for identity only, never repurposed as a status color
