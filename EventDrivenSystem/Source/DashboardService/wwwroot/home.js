@@ -464,6 +464,30 @@ function renderTracks(state) {
   rows.forEach((r, i) => updateTrack(rails[i], r));
 }
 
+// Arrived is always --jade, missing is always --ember, pending is always --rule — three fixed
+// meanings, never --phase (that token is for chrome that moves with session mood, not for "this
+// data arrived," which doesn't become less true because the market closed).
+const TRACK_COLORS = { a: "var(--jade)", m: "var(--ember)", p: "var(--rule)" };
+
+// Turns the backend's per-bucket map ("aaaammmpppp...", one char per expected bucket) into a
+// linear-gradient with one color-stop pair per state *transition*, not per bucket — a 375-bucket
+// 1-min row costs a handful of stops, not 375. Same helper as the Data page's app.js; duplicated
+// rather than shared since this app has no module system between the two pages.
+function bucketMapGradient(map, colors) {
+  const total = map.length || 1;
+  const stops = [];
+  let i = 0;
+  while (i < total) {
+    const c = map[i];
+    let j = i;
+    while (j < total && map[j] === c) j++;
+    const color = colors[c] || colors.p;
+    stops.push(`${color} ${(i / total * 100).toFixed(3)}%`, `${color} ${(j / total * 100).toFixed(3)}%`);
+    i = j;
+  }
+  return `linear-gradient(90deg, ${stops.join(",")})`;
+}
+
 function trackSkeleton(r) {
   return `
     <div class="track${r.thin ? " track--thin" : ""}">
@@ -472,9 +496,7 @@ function trackSkeleton(r) {
         <span class="track__count"></span>
       </div>
       <div class="track__rail" role="img" style="--bars:${r.expectedTotal || 1}">
-        <div class="layer layer--rest"></div>
-        <div class="layer layer--gap"></div>
-        <div class="layer layer--fill"></div>
+        <div class="track__map"></div>
       </div>
     </div>`;
 }
@@ -485,18 +507,17 @@ function updateTrack(el, r) {
   const behind = r.status === "amber" || r.status === "red";
   const short = Math.max(0, r.expectedSoFar - r.count);
 
-  el.classList.toggle("track--behind", behind);
   el.querySelector(".track__count").innerHTML =
     `<b>${r.count}</b> / ${r.expectedTotal} bars${behind && short ? ` · ${short} short` : ""}`;
 
   const rail = el.querySelector(".track__rail");
   rail.style.setProperty("--bars", total);
-  rail.style.setProperty("--fill", `${Math.min(100, (r.count / total) * 100)}%`);
-  rail.style.setProperty("--exp", `${Math.min(100, (r.expectedSoFar / total) * 100)}%`);
   rail.setAttribute(
     "aria-label",
     `${r.contract} ${r.timeframe} minute: ${r.count} of ${r.expectedTotal} bars ingested, ${r.expectedSoFar} expected by now`
   );
+
+  rail.querySelector(".track__map").style.backgroundImage = bucketMapGradient(r.bucketMap || "", TRACK_COLORS);
 }
 
 function renderRoutes(state, svc) {

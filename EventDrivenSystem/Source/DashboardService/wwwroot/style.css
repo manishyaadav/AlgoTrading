@@ -1079,11 +1079,20 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 }
 .candle-row-foot .storage-indicators { margin-top: 0; }
 
-/* --- Rail: the console's session-ribbon mechanics, shared -----------------
-   Three full-width tick layers, each clipped to its own share of the session.
-   Keeping every layer full width is what locks the tick period to the axis
-   instead of stretching it with the fill — don't reimplement by sizing the
-   fill element's width. */
+/* --- Rail: per-bucket ground truth, not an aggregate approximation --------
+   The backend sends bucketMap — one char per expected bucket ('a' arrived,
+   'm' missing, 'p' pending) straight from the Redis SET's actual members
+   (each arrived bucket's own WindowsStartTime), not just a cardinality. A
+   simple "first N ticks are fill, then one gap" model can't represent an
+   outage in the middle of an otherwise-healthy day; it only ever shows one
+   trailing gap regardless of where the real hole is.
+
+   bucketMapGradient() in app.js turns that into a run-length-encoded
+   linear-gradient (one color-stop pair per state *transition*, not per
+   bucket — a 375-bucket 1-min row costs a handful of stops, not 375),
+   applied as .rail-map's background-image. The tick rhythm (the small gaps
+   between buckets) comes from a separate mask layer here, independent of
+   color, so it's the same cost regardless of how fragmented the map is. */
 .rail {
   position: relative;
   height: 20px;
@@ -1092,22 +1101,21 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   overflow: hidden;
 }
 
-.rail-layer {
+.rail-map {
   position: absolute;
   inset: 0;
-  background-image: linear-gradient(90deg, currentColor 0 58%, transparent 58%);
-  background-size: calc(100% / var(--bars, 375)) 100%;
-  transition: clip-path var(--motion-standard), color var(--motion-standard);
+  -webkit-mask-image: linear-gradient(90deg, black 0 58%, transparent 58%);
+          mask-image: linear-gradient(90deg, black 0 58%, transparent 58%);
+  -webkit-mask-size: calc(100% / var(--bars, 375)) 100%;
+          mask-size: calc(100% / var(--bars, 375)) 100%;
+  -webkit-mask-repeat: repeat-x;
+          mask-repeat: repeat-x;
+  transition: background-image var(--motion-standard);
 }
-.rail-layer.rest { color: var(--border); }
-.rail-layer.gap  { color: var(--red); opacity: 0.5; clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); }
-.rail-layer.fill { color: var(--green); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
 
-.rail[data-status="amber"]   .rail-layer.fill { color: var(--yellow); }
-.rail[data-status="red"]     .rail-layer.fill { color: var(--red); }
-.rail[data-status="pending"] .rail-layer.fill { color: var(--muted); }
-
-/* Where the session should have reached by now, per the backend's ExpectedSoFar. */
+/* Where the session should have reached by now, per the backend's ExpectedSoFar.
+   A sibling of .rail-map, not a child — .rail-map's mask would otherwise chop
+   this marker into the same tick pattern instead of drawing it as one clean line. */
 .rail-now {
   position: absolute;
   top: 0;
@@ -1130,9 +1138,9 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .rail-axis b { color: var(--text); font-weight: 500; }
 
 /* Under ~760px the 375-tick period falls below a device pixel and turns to
-   mush — drop to a solid bar, which reads the same at a glance. */
+   mush — drop the mask so it reads as a solid bar instead. */
 @media (max-width: 760px) {
-  .rail-layer { background-image: linear-gradient(90deg, currentColor 0 100%); }
+  .rail-map { -webkit-mask-image: none; mask-image: none; }
 }
 
 /* --- Shared status card (country gate on Exchanges) --- */

@@ -420,9 +420,6 @@ a { color: inherit; }
 .track__count { white-space: nowrap; }
 .track__count b { color: var(--bone); font-weight: 500; }
 
-/* Three stacked full-width tick layers, each clipped to its own share of the
-   session. Keeping every layer full width means the tick period stays locked
-   to the axis instead of stretching with the fill. */
 .track__rail {
   position: relative;
   height: 22px;
@@ -431,25 +428,43 @@ a { color: inherit; }
 }
 .track--thin .track__rail { height: 13px; }
 
-.layer {
+/* Per-bucket ground truth, not an aggregate approximation — same fix, same
+   reasoning, as the Data page's .rail-map (design-system/algotrading-
+   dashboard/pages/data.md). The backend sends bucketMap, one char per
+   expected bucket straight from the Redis SET's real members ('a' arrived,
+   'm' missing, 'p' pending), and bucketMapGradient() in home.js turns it into
+   a run-length-encoded linear-gradient — one color-stop pair per state
+   *transition*, not per bucket. A simple "first N ticks are fill" model
+   can't show an outage in the middle of an otherwise-healthy day; it only
+   ever draws one trailing gap regardless of where the real hole is.
+
+   Three fixed meanings, not a palette that drifts: arrived is always --jade,
+   missing is always --ember, pending is always --rule. Arrived used to be
+   --phase (shifting with session mood) for the un-thin 1-min row and --jade
+   for .track--thin rows — two colors for one fact, and the legend's single
+   swatch only ever matched one row out of eight. Never --phase here again;
+   that token is for chrome that should move with the trading day (the page
+   wash, the mark), not for "this data arrived," which doesn't become less
+   true because the market closed.
+
+   The tick rhythm (the small gaps between buckets) is a mask, independent
+   of color, so it costs nothing extra regardless of how fragmented the map is. */
+.track__map {
   position: absolute;
   inset: 0;
-  background-image: linear-gradient(90deg, currentColor 0 58%, transparent 58%);
-  background-size: calc(100% / var(--bars, 375)) 100%;
-  transition: clip-path var(--slow), color var(--slow);
+  -webkit-mask-image: linear-gradient(90deg, black 0 58%, transparent 58%);
+          mask-image: linear-gradient(90deg, black 0 58%, transparent 58%);
+  -webkit-mask-size: calc(100% / var(--bars, 375)) 100%;
+          mask-size: calc(100% / var(--bars, 375)) 100%;
+  -webkit-mask-repeat: repeat-x;
+          mask-repeat: repeat-x;
+  transition: background-image var(--slow);
 }
-.layer--rest { color: var(--rule); }
-.layer--gap  { color: var(--ember); clip-path: inset(0 calc(100% - var(--exp, 0%)) 0 0); opacity: 0.55; }
-.layer--fill { color: var(--phase); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
-
-.track--behind .layer--fill { color: var(--ember); }
-.track--thin   .layer--fill { color: var(--jade); }
-.track--thin.track--behind .layer--fill { color: var(--ember); }
 
 /* Under ~760px a 375-tick period falls below a device pixel and turns to mush —
-   drop to a solid bar, which reads the same at a glance. */
+   drop the mask so it reads as a solid bar instead. */
 @media (max-width: 760px) {
-  .layer { background-image: linear-gradient(90deg, currentColor 0 100%); }
+  .track__map { -webkit-mask-image: none; mask-image: none; }
 }
 
 .legend {
@@ -472,7 +487,7 @@ a { color: inherit; }
   border-radius: 1px;
   vertical-align: -1px;
 }
-.key--fill { background: var(--phase); }
+.key--fill { background: var(--jade); }
 .key--gap  { background: var(--ember); opacity: 0.55; }
 .key--rest { background: var(--rule); }
 

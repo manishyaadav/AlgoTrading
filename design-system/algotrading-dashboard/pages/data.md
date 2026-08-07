@@ -22,30 +22,91 @@ Two reasons it had to change, both load-bearing:
 
 Don't put these back in a multi-column grid.
 
-## The rail
+## The rail — per-bucket ground truth, not an aggregate approximation
 
-Same mechanics as `home.css`'s `.track__rail` — three full-width tick layers, each clipped to its
-share of the session:
+The rail used to be a two-region model: `count`-many ticks rendered as one contiguous green run
+from the start, then one contiguous gap. That's an *approximation* — `count` comes from a Redis
+SET's cardinality, and a SET has no order or position, just membership. The approximation breaks
+visibly the moment a day isn't a clean "healthy, then behind" shape: if the pipeline was down for a
+stretch in the middle of the day and has been fine ever since, the true picture is
+green…green…**red (the actual missed buckets)**…green…green, and the two-region model cannot draw
+that. It can only ever show one trailing gap, positioned wherever the arithmetic puts it — never
+where the real hole is.
+
+The backend now sends `bucketMap`: one character per expected bucket, index 0 = session open —
+`'a'` arrived, `'m'` missing (expected by now, genuinely isn't there), `'p'` not due yet. Built in
+`BuildCandleCountStatus` (`Program.cs`) by reading the count SET's actual **members** (not just its
+length) — each member is that bucket's own `WindowsStartTime`, written by
+`DataIngestionNotificationFunctions`/`DataAggregationNotificationFunctions` — and checking, for
+every bucket from session open to now, whether its own start-time string is a member. Bucket starts
+are computed as `sessionOpen + i × timeframeMinutes`, which is exactly how
+`RunningBucket.FloorToBucketStart` aligns buckets on the aggregator side, so this lines up
+bucket-for-bucket with reality — not an approximation of it.
 
 ```
-.rail          --bars (tick count) · --fill (count %) · --exp (expectedSoFar %)
-  .rail-layer.rest   --border      the full session
-  .rail-layer.gap    --red @ .5    clipped to --exp   → shows through as the shortfall
-  .rail-layer.fill   --green       clipped to --fill  → what actually arrived
-  .rail-now          --text 1px    sits at --exp
+.rail
+  .rail-map   background-image: linear-gradient(...)   the per-bucket colors
+  .rail-now   left: var(--exp)                          where the session should be by now
 ```
 
-**Every layer stays full width; only `clip-path` differs.** That's what locks the tick period to
-the axis. Sizing the fill element's `width` instead would stretch the ticks and the bars would no
-longer line up between rows. `background-size: calc(100% / var(--bars))` gives exactly `--bars`
-periods across the track.
+`bucketMapGradient()` (`app.js`) turns the map into a **run-length-encoded** gradient — one
+color-stop pair per state *transition*, not per bucket. A 1-min row with two transitions (arrived →
+missing → arrived) costs 4 stops regardless of whether `expectedTotal` is 25 or 375. The tick
+rhythm (the small gaps between buckets) is a separate `mask-image` on `.rail-map`, sized to
+`calc(100% / var(--bars))` — independent of color, so it costs nothing extra no matter how
+fragmented the map is.
 
-`.rail[data-status]` recolours the fill: `amber` → `--yellow`, `red` → `--red`, `pending` →
-`--muted`. Status comes from the backend's `ComputeStatus`, which compares against `ExpectedSoFar`
-— not against the full 375 — so "behind" only lights once it genuinely is.
+**`.rail-now` is a sibling of `.rail-map`, never its child.** `.rail-map`'s mask applies to
+everything it contains — nesting the now-marker inside it would chop the marker into the same tick
+pattern instead of drawing one clean line.
 
-Below 760px the tick period drops under a device pixel, so `.rail-layer` falls back to a solid
-bar. Keep that media query if you change the rail.
+Below 760px the tick period drops under a device pixel — drop the mask (`mask-image: none`) so it
+reads as a solid multi-color bar instead of mush. Keep that media query if you change the rail.
+
+## Three fixed colors, never a status- or phase-driven palette
+
+Arrived is **always** `--green`, missing is **always** `--red`, pending is **always** `--border`.
+Two things this replaces, both real bugs that shipped:
+
+- **Status used to recolor the whole fill** (`data-status="amber"` → `.rail-layer.fill { color:
+  var(--yellow) }`). The fill covers *every bar that already arrived*, so recoloring it
+  retroactively repainted successfully-ingested history as a problem, then flipped it back a few
+  seconds later once the aggregate caught up. Bars that landed didn't become wrong because a
+  *later* bucket is running behind — and with per-bucket ground truth, this isn't even
+  representable the same way anymore: color is a property of each bucket's own arrived/missing
+  state, not of an aggregate status applied to the whole element.
+- **The Data page's fill was `--green` while the console's was `--phase`** (shifting with session
+  mood — indigo pre-open, amber during open, muted after close). Two colors for "this bar arrived"
+  depending which page you were on, and on the console, arrived data literally changed color
+  through the day for reasons unconnected to whether it had actually arrived. See
+  `pages/home.md`.
+
+The status badge (`On Track` / `Behind` / `Behind / No Data`) still carries the aggregate signal in
+text, and still comes from `ComputeStatus`, which has been through two revisions, each fixing a
+real failure this app
+hit in production:
+
+1. **Ratio → absolute bucket gap.** `count / expectedSoFar >= 0.9` made low-`expectedTotal`
+   timeframes absurdly sensitive to completely normal lag — 75-min has only 5 buckets in a whole
+   session, so being one bucket behind (routine right after every boundary, especially for the
+   cascaded 10/15/30/60/75-min aggregators that wait on another aggregator's own bucket cycle
+   before they can even start) is a 20% ratio swing that flipped straight to amber. The identical
+   one-bucket lag on 1-min (375 buckets) barely dented its ratio.
+2. **Cumulative gap → freshness of the latest arrival.** Even the fixed absolute-gap version
+   (`expectedSoFar - count`) shared the ratio's real flaw: neither can recover from a *permanent*
+   historical gap. If the pipeline is down for a stretch and misses, say, 40 buckets, `count`
+   stays 40 short of `expectedSoFar` for the rest of the day — even once the pipeline has been
+   perfectly healthy for hours since resuming. The badge stayed red forever, regardless of how
+   well things were actually going right now.
+
+`ComputeStatus` now takes `latestAgeSeconds` — how long since the most recent bar arrived — and
+compares it against the same "stale" thresholds `/api/freshness` already uses (2×/4× the
+timeframe): `green` if fresh, `amber` if moderately stale, `red` if very stale or nothing has
+arrived at all this session. One shared definition of "stale" across the app, applied to whichever
+bar is *most recent*, not a running total — a candle that landed 90 seconds ago means "caught up
+right now," full stop, regardless of what happened three hours earlier. The cumulative gap is
+still shown as informational text (`N short`) — that's accurate and worth keeping — it just no
+longer drives the color.
 
 ## Row anatomy
 
@@ -91,11 +152,21 @@ from a section they're already inside, not a page-level heading.
 ## Checklist
 
 - [ ] Rows stay full-width and stacked
-- [ ] Rail layers stay full width; only `clip-path` varies
-- [ ] `--bars` matches `expectedTotal`, so the tick count is the real bar count
-- [ ] The `<760px` solid-bar fallback survives
+- [ ] `bucketMap` built from the count SET's real members (`SetMembersAsync`), not just its length
+      — a cardinality can't tell you *which* buckets arrived
+- [ ] Bucket starts computed as `sessionOpen + i × timeframeMinutes` — matches
+      `RunningBucket.FloorToBucketStart` exactly, or the map silently misaligns
+- [ ] `bucketMapGradient()` stays run-length-encoded (stops per transition, not per bucket)
+- [ ] `--bars` matches `expectedTotal`, so the tick mask period is the real bar count
+- [ ] The `<760px` mask-dropped fallback survives
 - [ ] Shortfall stated in text (`N behind`), not by colour alone
 - [ ] Timestamps through `clockTime()`
+- [ ] Arrived/missing/pending stay fixed colors (`--green`/`--red`/`--border`) — never re-add a
+      status- or phase-driven override; a bucket's own state doesn't change with anything else
+- [ ] `.rail-now` stays a sibling of `.rail-map`, never nested inside it — the mask would chop it
+- [ ] Status badge stays based on freshness of the latest arrival (`latestAgeSeconds`), not a
+      cumulative count/ratio/gap — anything cumulative can never recover from a permanent
+      historical gap (an earlier outage) even once the pipeline is fully healthy again
 - [ ] Instrument color via `instrumentColorVar()`'s first-seen assignment, never a hash (no
       collision guarantee) or a hardcoded ticker→color map
 - [ ] `--tag-*` used for identity only, never repurposed as a status color

@@ -324,15 +324,37 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
     string countKeyPrefix, Func<string, string> snapshotKeyBuilder, string? provider = null)
 {
     var db = redis.GetDatabase();
-    var today = IstNow().ToString("yyyy-MM-dd");
+    var now = IstNow();
+    var today = now.ToString("yyyy-MM-dd");
 
+    // The SET's members are each arrived bucket's own WindowsStartTime (see NotificationService's
+    // DataIngestionNotificationFunctions/DataAggregationNotificationFunctions) — real per-bucket
+    // ground truth, not just a count. Reading the members (not just the cardinality) is what makes
+    // the bucket map below possible.
     var countKey = $"{countKeyPrefix}:{ticker}:{timeframeMinutes}min:{today}";
-    long count = await db.SetLengthAsync(countKey);
+    RedisValue[] members = await db.SetMembersAsync(countKey);
+    var arrived = new HashSet<string>(members.Select(m => (string)m!));
+    long count = arrived.Count;
     bool inRedis = count > 0;
 
     int expectedTotal = 375 / timeframeMinutes; // 375 one-minute bars in a 9:15-3:30 session
     int expectedSoFar = ExpectedSoFar(timeframeMinutes, expectedTotal);
-    string status = ComputeStatus(count, expectedSoFar);
+
+    // Per-bucket ground truth for the rail: which *specific* buckets landed, not just how many.
+    // A simple "first N ticks are fill" model can't represent an outage in the middle of an
+    // otherwise-healthy day — it just shows one big trailing gap regardless of where the actual
+    // hole is. Bucket starts are anchored to session open exactly like
+    // RunningBucket.FloorToBucketStart aligns them on the aggregator side, so this lines up
+    // bucket-for-bucket with reality.
+    var open = now.Date.AddHours(9).AddMinutes(15);
+    var bucketMap = new char[expectedTotal];
+    for (int i = 0; i < expectedTotal; i++)
+    {
+        var bucketStart = open.AddMinutes(i * timeframeMinutes);
+        bool isArrived = arrived.Contains(bucketStart.ToString("yyyy-MM-ddTHH:mm:ss"));
+        bool isDue = bucketStart.AddMinutes(timeframeMinutes) <= now;
+        bucketMap[i] = isArrived ? 'a' : isDue ? 'm' : 'p';
+    }
 
     // Latest snapshot, for display — separate key from the count SET above.
     RedisValue snapshot = await db.StringGetAsync(snapshotKeyBuilder(ticker));
@@ -348,9 +370,14 @@ static async Task<CandleCountStatus> BuildCandleCountStatus(
         catch (JsonException) { /* leave blank rather than fail the whole request */ }
     }
 
+    double? latestAgeSeconds = DateTime.TryParse(updatedOn, out var updatedOnParsed)
+        ? (now - updatedOnParsed).TotalSeconds
+        : null;
+    string status = ComputeStatus(count, expectedSoFar, latestAgeSeconds, timeframeMinutes);
+
     bool inAzurite = await CheckAzurite(ohlcClient, ticker, today);
 
-    return new CandleCountStatus(ticker, timeframeMinutes, (int)count, expectedTotal, expectedSoFar, status, inRedis, inAzurite, latestWindowStartTime, updatedOn, provider);
+    return new CandleCountStatus(ticker, timeframeMinutes, (int)count, expectedTotal, expectedSoFar, status, inRedis, inAzurite, latestWindowStartTime, updatedOn, provider, new string(bucketMap));
 }
 
 static int ExpectedSoFar(int intervalMinutes, int expectedTotal)
@@ -366,14 +393,26 @@ static int ExpectedSoFar(int intervalMinutes, int expectedTotal)
     return Math.Min(expectedTotal, (int)(elapsedMinutes / intervalMinutes));
 }
 
-static string ComputeStatus(long count, int expectedSoFar)
+static string ComputeStatus(long count, int expectedSoFar, double? latestAgeSeconds, int timeframeMinutes)
 {
     // Before market open there's nothing to be behind on yet — that's "pending", not a warning.
     if (expectedSoFar <= 0) return count > 0 ? "green" : "pending";
 
-    var ratio = (double)count / expectedSoFar;
-    if (ratio >= 0.9) return "green";
-    if (ratio >= 0.5) return "amber";
+    // Status reflects how CURRENT the most recent arrival is, not the cumulative count-for-the-
+    // day. Cumulative count was tried first (an absolute bucket gap, replacing an even earlier
+    // ratio) and both share the same fatal flaw: they can never recover from a permanent
+    // historical gap. If the pipeline was down for a stretch and has been perfectly healthy ever
+    // since resuming, count stays short of expectedSoFar by exactly the size of that outage —
+    // forever, for the rest of the day — so the badge stayed red no matter how well things were
+    // actually going right now. Freshness of the latest arrival has no memory of history: a
+    // recent candle means "caught up as of now" regardless of what happened three hours ago.
+    // Same 2x/4x-the-timeframe thresholds /api/freshness already uses for its own stale check —
+    // one shared definition of "stale" across the app, not a second one invented here.
+    if (latestAgeSeconds is null) return "red"; // nothing has arrived at all this session
+
+    double intervalSeconds = timeframeMinutes * 60;
+    if (latestAgeSeconds <= intervalSeconds * 2) return "green";
+    if (latestAgeSeconds <= intervalSeconds * 4) return "amber";
     return "red";
 }
 
@@ -494,4 +533,5 @@ record CandleCountStatus(
     bool InAzurite,
     string? LatestWindowStartTime,
     string? UpdatedOn,
-    string? Provider); // null for aggregation entries — the concept only exists on the ingestion side today
+    string? Provider, // null for aggregation entries — the concept only exists on the ingestion side today
+    string BucketMap); // one char per expected bucket, index 0 = session open: 'a' arrived, 'm' missing (expected by now, isn't there — a genuine gap), 'p' not due yet

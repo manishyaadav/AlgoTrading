@@ -662,21 +662,43 @@ function instrumentColorVar(name) {
   return `var(--tag-${instrumentTagByName.get(key)})`;
 }
 
+// Ingested is always green — never tied to session mood/status. Missing (expected by now, isn't
+// there — a genuine, permanent gap) is always red. Not-yet-due is the dim "rest of session" tone.
+// Three fixed meanings, not a palette that drifts with anything else.
+const BUCKET_COLORS = { a: "var(--green)", m: "var(--red)", p: "var(--border)" };
+
+// Turns the backend's per-bucket map ("aaaammmpppp...", one char per expected bucket) into a
+// linear-gradient with one color-stop pair per state *transition*, not per bucket — a 375-bucket
+// 1-min row costs a handful of stops, not 375. The tick rhythm is a separate mask in CSS
+// (.rail-map), so this never needs to know or care about it.
+function bucketMapGradient(map, colors) {
+  const total = map.length || 1;
+  const stops = [];
+  let i = 0;
+  while (i < total) {
+    const c = map[i];
+    let j = i;
+    while (j < total && map[j] === c) j++;
+    const color = colors[c] || colors.p;
+    stops.push(`${color} ${(i / total * 100).toFixed(3)}%`, `${color} ${(j / total * 100).toFixed(3)}%`);
+    i = j;
+  }
+  return `linear-gradient(90deg, ${stops.join(",")})`;
+}
+
 function candleStatusCardHtml(item) {
   const total = item.expectedTotal || 1;
-  const fill = Math.min(100, (item.count / total) * 100);
   const exp = Math.min(100, (item.expectedSoFar / total) * 100);
   const label = STATUS_LABELS[item.status] || item.status;
   const short = item.expectedSoFar - item.count;
+  const map = item.bucketMap || "";
 
   // One tick per expected bar, on the same 09:15→15:30 axis the console uses.
   const rail = `
-    <div class="rail" data-status="${item.status}" style="--bars:${total}; --fill:${fill}%; --exp:${exp}%"
+    <div class="rail"
          role="img" aria-label="${esc(item.contract)} ${item.timeframe} minute: ${item.count} of ${item.expectedTotal} bars, ${item.expectedSoFar} expected by now">
-      <div class="rail-layer rest"></div>
-      <div class="rail-layer gap"></div>
-      <div class="rail-layer fill"></div>
-      <div class="rail-now"></div>
+      <div class="rail-map" style="--bars:${total}; background-image:${bucketMapGradient(map, BUCKET_COLORS)}"></div>
+      <div class="rail-now" style="--exp:${exp}%"></div>
     </div>`;
 
   const meta = [
