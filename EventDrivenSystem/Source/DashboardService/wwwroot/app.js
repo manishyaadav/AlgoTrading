@@ -1,5 +1,14 @@
 const REFRESH_MS = 5000;
 
+// Strategy API base — must be declared before the initial showPage() call
+// below (landing directly on #strategy runs loadStrategyGrid() synchronously
+// during page load, which reads this). It used to be declared much further
+// down, past that call, which threw "Cannot access before initialization"
+// on every cold load of the Strategy page. Uses the current page's hostname
+// rather than a hardcoded "localhost" so this also works when the dashboard
+// is opened from another device on the LAN (e.g. a phone) via its IP.
+const STRATEGY_API_BASE = `${location.protocol}//${location.hostname}:8096`;
+
 // --- Live IST clock in the header (matches home.html's .stamp) ---
 const IST_FMT = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Kolkata",
@@ -745,9 +754,6 @@ refresh();
 setInterval(refresh, REFRESH_MS);
 
 // --- Strategy page (talks to strategy-live's published port directly from the browser) ---
-// Uses the current page's hostname rather than a hardcoded "localhost" so this also works
-// when the dashboard is opened from another device on the LAN (e.g. a phone) via its IP.
-const STRATEGY_API_BASE = `${location.protocol}//${location.hostname}:8096`;
 
 // Fixed choices per the current spec. Exchange/Risk are hardcoded outright (shown disabled);
 // the rest are closed lists for now — expand these arrays as the product grows.
@@ -881,11 +887,11 @@ function ruleRowHtml(rule, index, key) {
 
 // One <div class="rules-section"> block: a header with an "+ Add Rule" button and a list container.
 // `key` must match what ruleSections[] is keyed by and what the Add/Remove buttons carry in data-key.
-function ruleSectionBlockHtml(key, title) {
+function ruleSectionBlockHtml(key, title, titleClass = "rules-section-title") {
   return `
     <div class="rules-section">
       <div class="rules-section-head">
-        <div class="view-label">${esc(title)}</div>
+        <div class="${titleClass}">${esc(title)}</div>
         <button type="button" class="btn rule-add-btn" data-key="${key}">+ Add Rule</button>
       </div>
       <div class="rule-list" data-key="${key}"></div>
@@ -993,10 +999,10 @@ function describeRule(r) {
     (r.link ? ` <span class="rule-link-tag">${esc(r.link)}</span>` : "");
 }
 
-function ruleListReadonlyHtml(title, rules) {
+function ruleListReadonlyHtml(title, rules, titleClass = "rules-section-title") {
   return `
     <div class="rules-section">
-      <div class="view-label">${esc(title)}</div>
+      <div class="${titleClass}">${esc(title)}</div>
       ${rules && rules.length
         ? rules.map(r => `<div class="rule-readonly">${describeRule(r)}</div>`).join("")
         : `<div class="hint">No rules defined.</div>`}
@@ -1126,10 +1132,10 @@ function renderStrategyViewPanel(id, s) {
       <div class="view-field span-2"><div class="view-label">Goals</div><div class="chip-row">${(s.goals || []).map(g => `<span class="chip">${esc(g)}</span>`).join("") || "—"}</div></div>
       <div class="view-field span-2"><div class="view-label">Instruments</div><div class="chip-row">${(sub.instruments || []).map(i => `<span class="chip">${esc(i)}</span>`).join("") || "—"}</div></div>
     </div>
-    ${ruleListReadonlyHtml("Trading Session Rules", sub.tradingSessionRules)}
-    <div class="rules-group-label">Long Entry</div>
+    ${ruleListReadonlyHtml("Trading Session Rules", sub.tradingSessionRules, "rules-group-label rules-group-label--highlight")}
+    <div class="rules-group-label rules-group-label--highlight">Long Entry</div>
     ${LONG_ENTRY_SECTIONS.map(([, title, sourceField]) => ruleListReadonlyHtml(title, (sub.longEntry || {})[sourceField])).join("")}
-    <div class="rules-group-label">Short Entry</div>
+    <div class="rules-group-label rules-group-label--highlight">Short Entry</div>
     ${SHORT_ENTRY_SECTIONS.map(([, title, sourceField]) => ruleListReadonlyHtml(title, (sub.shortEntry || {})[sourceField])).join("")}
   `;
   document.getElementById("panel-edit-btn").addEventListener("click", () => openStrategyEdit(id));
@@ -1149,17 +1155,20 @@ function openStrategyNew() {
 }
 
 // Section keys used throughout: which EntryExitRule sub-array each maps to, on which side.
+// Titles don't repeat "Long Entry:"/"Short Entry:" — that's the enclosing
+// .rules-group-label--highlight's job (see renderStrategyViewPanel /
+// renderStrategyForm), and repeating it here is what these titles used to do.
 const LONG_ENTRY_SECTIONS = [
-  ["longEntryRules", "Long Entry: Entry Rules", "entryRules"],
-  ["longEntryRisk", "Long Entry: Risk Management Rules", "riskManagementRules"],
-  ["longEntryStopLoss", "Long Entry: Update Stop-Loss Rules", "updateStopLossRules"],
-  ["longEntryExit", "Long Entry: Exit Rules", "exitRules"],
+  ["longEntryRules", "Entry Rules", "entryRules"],
+  ["longEntryRisk", "Risk Management Rules", "riskManagementRules"],
+  ["longEntryStopLoss", "Update Stop-Loss Rules", "updateStopLossRules"],
+  ["longEntryExit", "Exit Rules", "exitRules"],
 ];
 const SHORT_ENTRY_SECTIONS = [
-  ["shortEntryRules", "Short Entry: Entry Rules", "entryRules"],
-  ["shortEntryRisk", "Short Entry: Risk Management Rules", "riskManagementRules"],
-  ["shortEntryStopLoss", "Short Entry: Update Stop-Loss Rules", "updateStopLossRules"],
-  ["shortEntryExit", "Short Entry: Exit Rules", "exitRules"],
+  ["shortEntryRules", "Entry Rules", "entryRules"],
+  ["shortEntryRisk", "Risk Management Rules", "riskManagementRules"],
+  ["shortEntryStopLoss", "Update Stop-Loss Rules", "updateStopLossRules"],
+  ["shortEntryExit", "Exit Rules", "exitRules"],
 ];
 
 function renderStrategyForm(id, existing) {
@@ -1237,12 +1246,12 @@ function renderStrategyForm(id, existing) {
       </div>
     </div>
 
-    ${ruleSectionBlockHtml("tradingSessionRules", "Trading Session Rules")}
+    ${ruleSectionBlockHtml("tradingSessionRules", "Trading Session Rules", "rules-group-label rules-group-label--highlight")}
 
-    <div class="rules-group-label">Long Entry</div>
+    <div class="rules-group-label rules-group-label--highlight">Long Entry</div>
     ${LONG_ENTRY_SECTIONS.map(([key, title]) => ruleSectionBlockHtml(key, title)).join("")}
 
-    <div class="rules-group-label">Short Entry</div>
+    <div class="rules-group-label rules-group-label--highlight">Short Entry</div>
     ${SHORT_ENTRY_SECTIONS.map(([key, title]) => ruleSectionBlockHtml(key, title)).join("")}
 
     <div id="form-status" class="hint"></div>
@@ -1389,5 +1398,3 @@ document.getElementById("strategy-panel").addEventListener("change", e => {
   }
 });
 // initial load, if the strategy grid is already the active page, is handled by showPage() above
-
-loadStrategyList();

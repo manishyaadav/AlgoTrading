@@ -791,10 +791,9 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 /* Highlighted variant — top-level section titles within a page that carry
    more weight than a regular eyebrow (there's no h2-per-subsection to lean
    on, unlike a page boundary). Used by Data's "Data Ingestion (1-min)" /
-   "Aggregation" and Exchanges' "Country" / "Exchange Session Timeline".
-   Opt-in per label, not a redefinition of .rules-group-label itself — the
-   Strategy rule builder's "Long Entry" / "Short Entry" stay plain, one level
-   down from a section they're already inside. */
+   "Aggregation", Exchanges' "Country" / "Exchange Session Timeline", and
+   Strategy's "Trading Session Rules" / "Long Entry" / "Short Entry". Opt-in
+   per label, not a redefinition of .rules-group-label itself. */
 .rules-group-label--highlight {
   display: flex;
   align-items: center;
@@ -818,13 +817,31 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 
 .rules-section { margin-bottom: 18px; }
 
+/* One tier below .rules-group-label--highlight: "Entry Rules", "Risk
+   Management Rules", etc. within a Long/Short Entry group. Same Archivo
+   treatment as .candle-row-name / .exchange-row-name — an item-level name,
+   not a form-field label, which is why this is its own class rather than
+   reusing the small-caps .view-field .view-label (that rule is scoped to
+   .view-field on purpose; a bare .view-label picking it up by cascade
+   accident is what made "Entry Rules" read as equally weighted with
+   "Trading Session Rules"/"Long Entry" above it, so every sub-heading had
+   to repeat "Long Entry:"/"Short Entry:" to stay legible on its own). */
+.rules-section-title {
+  font-family: Archivo, sans-serif;
+  font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 13.5px;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
 .rules-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.rules-section-head .view-label { margin-bottom: 0; }
+.rules-section-head .rules-section-title { margin-bottom: 0; }
 
 .rule-row {
   background: var(--bg);
