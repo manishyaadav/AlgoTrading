@@ -14,6 +14,7 @@ using DataIngestionFunctions.SharedLibrary.Events;
 using NAudio.Wave;
 using SharedLibrary.Events.AlertIngestion;
 using SharedLibrary.Enums.AlertFeed;
+using DataIngestionFunctions.RedisConfig;
 
 namespace DataIngestionFunctions
 {
@@ -21,14 +22,16 @@ namespace DataIngestionFunctions
     {
         private readonly ILogger<DataIngestionFunctions> _logger;
         private readonly IProducer<string, string> _producer;
+        private readonly RedisHelper _redisHelper;
         private static string _producerTopicName = $"live-dataingestion-ohlc-topic";
         private static string _mockProducerTopicName = _producerTopicName;
         private static string _producerAlertTopicName = $"live-alertingestion-alert-topic";
 
-        public DataIngestionFunctions(ILoggerFactory loggerFactory, IProducer<string, string> producer)
+        public DataIngestionFunctions(ILoggerFactory loggerFactory, IProducer<string, string> producer, RedisHelper redisHelper)
         {
             _logger = loggerFactory.CreateLogger<DataIngestionFunctions>();
             _producer = producer;
+            _redisHelper = redisHelper;
         }
 
         [Function("DataIngestionTradingViewFunction")]
@@ -80,6 +83,14 @@ namespace DataIngestionFunctions
                     var kafkaMessage = JsonSerializer.Serialize(dataToSend);
                     await ProduceToKafka(_producerTopicName, key, kafkaMessage, _logger);
                     _logger.LogInformation("Live Data Ingestion, Base 1M, C# Kafka trigger function processed a message: {EventData}", eventDataValue);
+
+                    // Cache the last real candle per ticker so SessionCloseGapFillFunction has
+                    // something to copy forward if this ticker goes quiet in the CAS window near
+                    // close. Keyed by the same DataSource-derived "provider" segment NotificationService
+                    // already uses for Ingestion:Count:*, so the gap-filler's presence check lines up
+                    // with this exactly.
+                    var provider = dataToSend.DataSource.ToString();
+                    await _redisHelper.AddToRedisWithExpiry($"Ingestion:LastCandle:{provider}:{dataToSend.Ticker}", kafkaMessage, TimeSpan.FromDays(3));
                 }
             }
             else

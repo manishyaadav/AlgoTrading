@@ -212,6 +212,11 @@ docker build -t dataingestion-service-image:v6 -f Dockerfile .
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` |
 | `ASPNETCORE_ENVIRONMENT` | `docker` |
 | `KAFKA_BROKER_URL` | `kafka-live:29092` |
+| `RedisConnectionString` | `redis-live:6379` — needed by `SessionCloseGapFillFunction` (see below) |
+| `Features:GapFill` | `true`/`false` — master on/off switch for gap-filling, no redeploy needed to flip it |
+| `GapFill:WindowMinutesBeforeClose` | `15` — how many minutes before close count as the CAS window |
+| `GapFill:GraceMinutes` | `1` — extra minutes of latency tolerance before a missing minute is treated as genuinely missing, so a slightly-late real candle always wins over a synthetic fill |
+| `GapFill:SessionCloseTime` | `15:30:00` — session close, in case it's ever not 15:30 (e.g. Muhurat trading) |
 
 ### HTTP routes
 
@@ -223,14 +228,16 @@ Route prefix: `api` (default). Both routes are `POST`.
 curl -X POST http://localhost:8080/api/dataingestion/tradingview/funcTradingViewDataFeed \
   -H "Content-Type: application/json" \
   -d '{
-        "SourceToken": "NIFTY",
-        "Timeframe": "1",
+        "Ticker": "NIFTY",
+        "Timeframe": 1,
         "Open": 24590.00, "High": 24591.50, "Low": 24587.35, "Close": 24588.75,
         "Volume": 381387,
         "EventTime": "2026-08-03T12:33:00",
-        "WindowsStartTime": "2026-08-03T12:33:00"
+        "Time": "2026-08-03T12:33:00"
       }'
 ```
+
+Field names here must match `TradingViewDataEvent`'s `[JsonPropertyName]` attributes exactly — it's `Ticker`/`Time`/a numeric `Timeframe`, not `SourceToken`/`WindowsStartTime`/a string (this example previously had all three wrong, which throws a plain `{"error":"Invalid JSON format"}` with no further detail — found while manually verifying `SessionCloseGapFillFunction`, see below).
 
 **`funcTradingViewAlertTestSQL`** — `TradingViewAlertToSQLFunction`. Writes the alert straight to SQL (no Kafka involved). Requires a reachable SQL Server — not part of this compose stack, so this will fail until one is configured.
 
@@ -239,3 +246,36 @@ curl -X POST http://localhost:8080/api/dataingestion/tradingview/funcTradingView
   -H "Content-Type: application/json" \
   -d '{"Ticker":"NIFTY","Message":"NIFTY Stop Loss on Call at 24588.75","EventTime":"2026-08-03T12:33:00","Time":"2026-08-03T07:03:00Z"}'
 ```
+
+## Gap-filling the CAS window near close
+
+SEBI's Closing Auction Session (CAS) for index derivatives means TradingView/Kite genuinely stop
+streaming 1-min ticks for the index in the last ~15 minutes before close — no trading happens until
+the single auction-uncrossing print lands, typically right at 15:29. Confirmed against real
+NIFTY/BANKNIFTY data: candles run normally through 15:14, nothing arrives 15:15-15:28, then one real
+print lands at 15:29. That's expected silence, not an outage.
+
+`SessionCloseGapFillFunction` (a `[TimerTrigger("0 * * * * *")]`, fires every minute) forward-fills
+the last known price for whichever minutes inside the configured window (`GapFill:*` env vars above)
+never got a real candle — publishing a flat `O=H=L=C=lastClose`, `Volume=0` candle (CAS really does
+mean zero trades, not an approximation) onto `live-dataingestion-ohlc-topic`, tagged
+`producerBy: "dataingestion.gapfill"` so it's distinguishable from a real candle
+(`"dataingestion.service"`) later if needed. This only ever acts inside that window — a gap anywhere
+else in the session is left alone and stays a genuine "missing" bucket on the dashboard, because
+outside the CAS window a gap really does mean the pipeline broke, and silently papering over that
+would hide a real problem.
+
+Publishing onto the exact same topic and `DataIngestionMinDataEvent` shape a real candle uses is what
+makes this transparent to everything downstream: `NotificationService`, all 6 `AggregationService`
+timeframes, and `ohlc-live`'s `LiveCandlePersistenceFunction` each already consume this topic
+independently and have no way to tell a filled candle from a real one, so every aggregation timeframe
+and the Azurite blob self-correct with zero code changes on their end — verified live end-to-end
+(seeded a real candle via the webhook, let the timer fill two consecutive missing minutes with a flat
+copy of the last close, then sent a later real candle and confirmed it correctly pre-empted the fill
+for its own minute — `NotificationService`'s Redis cache picked up every one of those candles,
+synthetic and real, without any change on its side).
+
+Needs its own "last known real candle" cache to copy from — `DataIngestionFunctions.cs` writes
+`Ingestion:LastCandle:{provider}:{ticker}` (3-day TTL) right after every real candle it publishes.
+This is new state DataIngestionService didn't have before (it was previously a fully stateless
+webhook-in/Kafka-out transform) — hence the new `RedisConnectionString` dependency above.
