@@ -427,12 +427,17 @@ static async Task<bool> CheckAzurite(HttpClient ohlcClient, string ticker, strin
 
         var body = await res.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.TryGetProperty("TotalRecords", out var total) && total.GetInt32() > 0;
+        // ohlc-live's anonymous response object is written PascalCase ("TotalRecords") but ASP.NET
+        // Core's default serializer emits it camelCase on the wire ("totalRecords") —
+        // TryGetProperty is case-sensitive, so a direct PascalCase lookup here always missed and
+        // this permanently returned false. Match case-insensitively, same as GetField does above
+        // for the holiday/session responses.
+        return GetField(doc.RootElement, "TotalRecords") is string totalStr
+            && int.TryParse(totalStr, out int total) && total > 0;
     }
     catch
     {
-        // ohlc-live unreachable, or no blob for today (during live market hours this is the honest,
-        // expected answer — the historical blob upload is a manual, after-hours process today).
+        // ohlc-live unreachable, or genuinely no blob yet for this ticker/date.
         return false;
     }
 }
