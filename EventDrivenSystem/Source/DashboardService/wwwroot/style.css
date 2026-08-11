@@ -314,7 +314,13 @@ header {
 .nav-icon { display: inline-flex; flex-shrink: 0; }
 .nav-icon .icon { width: 18px; height: 18px; }
 
-main { flex: 1; min-width: 0; padding: 24px; max-width: 1180px; }
+/* 1180px was sized for a laptop-class window and never revisited — on a wide monitor it leaves a
+   huge dead void next to the sidebar on every page (not just this one; it's the shared container).
+   1600px gives large screens real room (existing grids — .cards-mini, .rule-workspace's 1fr flow
+   column, .fork — already reflow via auto-fill/1fr, so they use the extra width instead of just
+   sitting in more empty space) while still capping so nothing goes edge-to-edge and content stays
+   in a readable block on ultrawide displays. */
+main { flex: 1; min-width: 0; padding: 24px; max-width: 1600px; }
 
 .page { display: none; }
 .page.active { display: block; }
@@ -1284,8 +1290,6 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
    new gets new classes: the vertical connector spine, the headline value/eyebrow layout, the
    entry/exit fork, and the cold-start seed bar. See design-system/algotrading-dashboard/pages/
    rule-engine.md. */
-
-.rule-flow { max-width: 1180px; }
 
 /* Two columns: what the engine reads, and what it decides. The rail is sticky because the tree is
    several viewports tall — an input list that scrolls away is useless for tracing a value down to
