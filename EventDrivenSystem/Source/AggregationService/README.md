@@ -15,8 +15,41 @@ Kafka-triggered Azure Function. Rolls 1-minute OHLC candles (from `dataingestion
 | `Aggregation75MinutesFunction` | `live-aggregation-ohlc-15min-topic` | `live-aggregation-ohlc-75min-topic` | `live-aggregator-75min-consumer` |
 | `PriceObservsorForMarkingFunction` | `mock--candle-aggregation-5min-20period-topic` | swing/pivot marking output | `mock-candle-5min-price-for-swing-observor` |
 | `MockAggregation5MinutesFunction` | `mock-dataingestion-ohlc-topic` | — | `mock-dataingestion-5min-aggregator` |
+| `IndicatorDispatcher{5,10,15,30,60,75}MinFunction` | that timeframe's own `live-aggregation-ohlc-{N}min-topic` | `live-indicator-ema-topic`, `live-indicator-supertrend-topic` | `live-indicator-{N}min-dispatcher` |
 
 Anything prefixed `mock-` is for local testing against synthetic data, not the live pipeline. Watch the real flow in **Kafdrop (http://localhost:9000)**.
+
+## Live indicator calculators
+
+See [WARMUP_AND_INDICATOR_PLAN.md](../../../WARMUP_AND_INDICATOR_PLAN.md) section 2e for the full
+design. Six thin `Indicators/IndicatorDispatcher{N}MinFunction.cs` wrappers (one per timeframe,
+mirroring the "one file per timeframe" pattern above) each consume their own timeframe's completed-
+bar output topic — own consumer group, so this doesn't interfere with `NotificationService`, which
+already reads the same topic — and hand the bar to the shared `Indicators/IndicatorDispatcher.cs`.
+
+The dispatcher reads `Indicator:Manifest:Active` fresh on every single candle (a plain Redis `GET`,
+deliberately no in-process caching — `WarmUpService` only rewrites this once a day at NSE `Init`, so
+there's no cache-invalidation question to solve), filters to whatever's active for this
+`(Ticker, TimeframeMinutes)`, and dispatches each match by `Reference` to `Indicators/EmaCalculator.cs`
+or `Indicators/SupertrendCalculator.cs`. Both calculators are a pure "read Redis Hash (+List for
+Supertrend), compute exactly one step, write it back" — no in-memory state carried between
+invocations, same restart-safety property `RunningBucket` already has above. Either returns `null`
+(a genuine no-op) if the instance isn't seeded yet — a live candle alone can never seed an indicator,
+only `WarmUpService`'s cold-start path (pulling history from `ohlc-live`) can.
+
+A successful update publishes to `live-indicator-ema-topic`/`live-indicator-supertrend-topic`, Kafka
+key `{Instrument}:{Timeframe}:{Period}:{Multiplier}` (not just `{Instrument}`, so two instances of
+the same indicator on the same ticker still get correct per-instance partition ordering).
+
+Verified live: seeded EMA(550) and Supertrend(20,4) on 5-min for NIFTY from real historical data via
+`WarmUpService`, then fed one synthetic completed 5-min bar onto `live-aggregation-ohlc-5min-topic`
+and confirmed both `Indicator:Running:*` Hashes advanced correctly (EMA shifted a small,
+correctly-weighted amount; Supertrend's True-Range window stayed trimmed to 20 entries, its band
+ratchet held), and both output topics received a correctly-shaped message.
+
+⚠️ Supertrend's band-ratchet math hasn't been cross-checked against a reference implementation with
+real data — see the plan doc's note under Supertrend for detail. Verified here only for internal
+consistency (seed→live continuity, correct True Range math), not numerical correctness.
 
 ## Windowing & restart-safety
 

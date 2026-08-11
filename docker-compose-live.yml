@@ -304,11 +304,13 @@ services:
       "KAFKA_BROKER_URL": "kafka-live:29092"
       "RedisConnectionString": "redis-live:6379"
       "StrategyServiceUrl": "http://strategy-live"
+      "OhlcApiBase": "http://ohlc-live"
     depends_on:
       - azurite-live
       - kafka-live
       - redis-live
       - strategy-live
+      - ohlc-live
     restart: unless-stopped
     networks:
       - live-network

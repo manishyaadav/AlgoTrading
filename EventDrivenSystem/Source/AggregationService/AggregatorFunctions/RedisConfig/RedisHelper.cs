@@ -31,6 +31,16 @@ namespace AggregatorFunctions.RedisConfig
             return await db.HashGetAllAsync(key);
         }
 
+        // Added for reading Indicator:Manifest:Active — WarmUpService writes it (its own RedisHelper
+        // has the matching SetStringAsync), the live indicator dispatcher functions read it fresh on
+        // every candle.
+        public async Task<string?> GetStringAsync(string key)
+        {
+            IDatabase db = _redis.GetDatabase();
+            RedisValue value = await db.StringGetAsync(key);
+            return value.IsNullOrEmpty ? null : (string)value!;
+        }
+
         public async Task SetHashAsync(string key, HashEntry[] entries, TimeSpan expiry)
         {
             IDatabase db = _redis.GetDatabase();

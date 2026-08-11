@@ -78,18 +78,41 @@ namespace OHLCFunctionApp
                     var columns = line.Split(',');
                     if (columns.Length == 6)
                     {
-                        _logger.LogInformation($"{blobName}, {columns[0]}");
-                        ohlcRecords.Add(new OHLCResponse
-                        {                            
-                            ContractName = blobName,
-                            Timeframe = 1,
-                            Date = DateTime.ParseExact(columns[0], "dd-MM-yyyy HH:mm:ss", new CultureInfo("en-IN")),
-                            Open = Double.Parse(columns[1]),
-                            Low = Double.Parse(columns[2]),
-                            High = Double.Parse(columns[3]),
-                            Close = Double.Parse(columns[4]),
-                            Volume = Int32.Parse(columns[5]),
-                        });
+                        // Was DateTime.ParseExact (throws) with unguarded Double/Int32.Parse right
+                        // next to it — one malformed row anywhere in the month (confirmed live: a
+                        // real row missing its seconds component, e.g. "03-08-2026 09:15" instead of
+                        // "...09:15:00") crashed the whole request with an unhandled exception, which
+                        // meant no HTTP response was ever sent — callers just hung until their own
+                        // client-side timeout, not a fast error. ParseDate (below) already existed in
+                        // this file for exactly the date case — it just wasn't wired in. Wrapping the
+                        // whole row now, not just the date, since a malformed number would hang the
+                        // same way. Skip the row and keep going, same resilience GetOHLCDataByDate.cs
+                        // already has for this same file format.
+                        try
+                        {
+                            var parsedDate = ParseDate(columns[0]);
+                            if (parsedDate == DateTime.MinValue)
+                            {
+                                _logger.LogWarning($"{blobName}: could not parse date '{columns[0]}', skipping row.");
+                                continue;
+                            }
+
+                            ohlcRecords.Add(new OHLCResponse
+                            {
+                                ContractName = blobName,
+                                Timeframe = 1,
+                                Date = parsedDate,
+                                Open = Double.Parse(columns[1]),
+                                Low = Double.Parse(columns[2]),
+                                High = Double.Parse(columns[3]),
+                                Close = Double.Parse(columns[4]),
+                                Volume = Int32.Parse(columns[5]),
+                            });
+                        }
+                        catch (FormatException ex)
+                        {
+                            _logger.LogWarning(ex, $"{blobName}: could not parse row '{line}', skipping.");
+                        }
                     }
                 }
             }
@@ -110,7 +133,9 @@ namespace OHLCFunctionApp
 
         private static DateTime ParseDate(string dateInput)
         {
-            string[] formats = { "dd-MM-yyyy HH:mm:ss", "yyyy-MM-ddTHH:mm:ss", "MM/dd/yyyy HH:mm:ss" }; // Add more formats if needed
+            // "dd-MM-yyyy HH:mm" (no seconds) added after finding real rows in this exact shape —
+            // recovering them is better than silently dropping otherwise-legitimate historical bars.
+            string[] formats = { "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy HH:mm", "yyyy-MM-ddTHH:mm:ss", "MM/dd/yyyy HH:mm:ss" }; // Add more formats if needed
             if (DateTime.TryParseExact(dateInput, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDate))
             {
                 return parsedDate;
