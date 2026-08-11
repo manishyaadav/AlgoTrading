@@ -146,9 +146,20 @@ services:
       "ASPNETCORE_ENVIRONMENT": "docker"
       "TZ": "Asia/Kolkata"
       "KAFKA_BROKER_URL": "kafka-live:29092"
+      "RedisConnectionString": "redis-live:6379"
+      # SessionCloseGapFillFunction — see EventDrivenSystem/Source/DataIngestionService/DataIngestionService/DataIngestionFunctions/SessionCloseGapFillFunction.cs.
+      # Forward-fills the last known price for whichever minutes near close never got a real
+      # candle (SEBI's Closing Auction Session halts index tick data for the last ~15 min before
+      # 15:30) so every downstream timeframe self-corrects without a manual fix. Set
+      # Features:GapFill to false to turn this off without a redeploy.
+      "Features:GapFill": "true"
+      "GapFill:WindowMinutesBeforeClose": "15"
+      "GapFill:GraceMinutes": "1"
+      "GapFill:SessionCloseTime": "15:30:00"
     depends_on:
       - kafka-live
       - azurite-live
+      - redis-live
     restart: unless-stopped
     networks:
       - live-network

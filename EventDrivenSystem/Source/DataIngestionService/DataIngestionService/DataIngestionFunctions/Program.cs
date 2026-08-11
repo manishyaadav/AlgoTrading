@@ -1,4 +1,5 @@
 using Confluent.Kafka;
+using DataIngestionFunctions.RedisConfig;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,10 @@ var host = new HostBuilder()
     {
         services.AddApplicationInsightsTelemetryWorkerService();
         services.ConfigureFunctionsApplicationInsights();
+
+        // Singleton, not the Transient other services register their own RedisHelper copy as — see
+        // RedisHelper.cs for why (SessionCloseGapFillFunction calls it every minute all day).
+        services.AddSingleton<RedisHelper>();
 
         services.AddSingleton<IProducer<string, string>>(serviceProvider =>
         {
