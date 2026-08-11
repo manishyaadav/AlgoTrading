@@ -1285,7 +1285,116 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
    entry/exit fork, and the cold-start seed bar. See design-system/algotrading-dashboard/pages/
    rule-engine.md. */
 
-.rule-flow { max-width: 900px; }
+.rule-flow { max-width: 1180px; }
+
+/* Two columns: what the engine reads, and what it decides. The rail is sticky because the tree is
+   several viewports tall — an input list that scrolls away is useless for tracing a value down to
+   the rules that consume it. */
+/* The 44px gap is a connector channel, not decoration. At the 20px this started with, a curve
+   from a card to a rule 400px below had so little horizontal room that it rendered as a near-
+   vertical hairline hugging the column edge — indistinguishable from a border. Lines need room
+   across to read as lines. */
+.rule-workspace {
+  position: relative;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 44px;
+  align-items: start;
+}
+
+.link-layer {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  overflow: visible;
+}
+.link-layer path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  opacity: 0.8;
+}
+/* Endpoint dots — without them a stroke landing on a card edge reads as an overhanging line
+   rather than as something connecting to that specific row. */
+.link-layer circle { fill: var(--accent); opacity: 0.9; }
+
+.source-rail { position: sticky; top: 16px; }
+.rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.rail-title {
+  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 12px; letter-spacing: 0.02em;
+}
+.rail-count { font-size: 10.5px; color: var(--muted); }
+.rail-note { font-size: 10.5px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+
+.source-list { display: flex; flex-direction: column; gap: 8px; }
+
+.source-card {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: inherit; font: inherit;
+  transition: border-color var(--motion-fast), opacity var(--motion-fast);
+}
+.source-card:hover { border-color: var(--line); }
+
+/* Dashed and valueless, the same treatment .placeholder-node already uses for the two gates this
+   page can't answer — an input with no feed is the same kind of honest nothing. */
+.source-card.unbacked { border-style: dashed; background: transparent; }
+.source-card.unbacked .src-label { color: var(--muted); }
+
+.src-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.src-label {
+  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 600;
+  font-size: 12px; line-height: 1.3;
+}
+.src-feeds {
+  flex-shrink: 0; font-size: 10px; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.src-scope { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.src-value {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px; margin-top: 6px;
+}
+.src-value.none { font-family: inherit; font-size: 10.5px; font-style: italic; color: var(--muted); margin-top: 4px; }
+.src-detail { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.src-asof {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; color: var(--muted); margin-top: 4px;
+}
+
+/* While a link is active everything unrelated recedes. Dimming rather than hiding: the shape of
+   the whole tree stays readable, so you can see *where* in it the highlighted rules sit. */
+.rule-workspace.linking .eval-row:not(.linked),
+.rule-workspace.linking .rule-node.gate:not(.linked),
+.rule-workspace.linking .source-card:not(.linked) { opacity: 0.25; }
+
+.rule-workspace.linking .linked.source-card,
+.rule-workspace.linking .linked.eval-row,
+.rule-workspace.linking .linked.rule-node {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.rule-workspace.linking .linked.eval-row { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* Below this the rail + channel eat so much width that the fork columns stop being readable, and
+   a legible tree matters more than the connector lines. The rail becomes a grid of cards above the
+   tree — still the full inventory of what's backed and what isn't, just without the flow drawing. */
+@media (max-width: 1200px) {
+  .rule-workspace { grid-template-columns: 1fr; gap: 20px; }
+  .source-rail { position: static; }
+  .source-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  /* Curves computed for a side-by-side layout are meaningless once the rail sits above the tree.
+     Hover/pin still highlights both sides — only the drawing goes. */
+  .link-layer { display: none; }
+}
 
 .identity {
   display: flex; align-items: center; gap: 12px;

@@ -44,6 +44,53 @@ seeing everything at once" — hiding Short behind a click while looking at Long
 the two sides are short enough (2 entry rules, 2 risk rules, 5 exit rules each in the real deployed
 strategy) that stacking costs a scroll, not real cognitive load.
 
+## The source rail: what the engine is actually looking at
+
+The rule tree answers "what would be decided". It structurally cannot answer the question that
+comes first — **what is the engine reading, and is any of it real right now.** That's the rail: a
+sticky left column listing every live input the evaluator touches, with its current value, the
+scope it belongs to, and a count of the rules and gates reading it.
+
+- **Backed vs. unbacked is the rail's primary distinction**, and unbacked cards get the same dashed
+  border and transparent background `.placeholder-node` already uses for the gates this page can't
+  answer. An input with no feed is the same kind of honest nothing as a gate with no answer, so it
+  looks the same.
+- **The count is on every card, backed or not.** `Position / order state` showing `1` next to a
+  dashed border, wired to a gate that in turn governs an entire branch, states the stack's biggest
+  gap as a structural fact rather than a paragraph of caveat.
+- **A card shows the *input*, not the rule's use of it.** The rule row for the session gate renders
+  `0.0038 × 24,583.80 = 93.42`; the card renders `24,583.80`, because 93.42 is a number the rule
+  computes and exists nowhere in Redis. Captioning a card with a derived value would be labelling
+  the wrong thing.
+- **Sorted backed-first, then in the order the tree first reaches them** — so the rail reads roughly
+  top-to-bottom alongside the rules beside it, and what's live is what you see first.
+
+## Linking: hover to trace, click to pin
+
+Hovering either side highlights the other and draws bezier connectors between them; everything
+unrelated dims to 25% rather than hiding, so the shape of the whole tree stays legible and you can
+see *where* the highlighted rules sit inside it.
+
+- **Pinning exists because hover cannot survive scrolling.** The tree is several viewports tall; a
+  hover-only interaction could never trace an input down to the rules at the bottom, which is the
+  main thing anyone would want to do with it. Click pins, click again releases, and the connectors
+  redraw on scroll (rAF-throttled).
+- **Connectors are drawn only to rows currently on screen.** A curve to something 3000px below is
+  noise, not information — the dimming already carries the relationship for everything off-screen.
+- **The 44px column gap is a connector channel, not decoration.** At the 20px it started with, a
+  curve to a rule 400px down had so little horizontal room it rendered as a near-vertical hairline
+  against the column edge, indistinguishable from a border. Lines need room across to read as lines.
+- **Below 1200px the rail moves above the tree and the connectors turn off.** The rail plus channel
+  eat enough width that the fork columns stop being readable, and a legible tree matters more than
+  the drawing. Highlighting still works in that mode; only the curves go.
+
+**Never-evaluated rules carry their inputs too.** This is the whole reason the rail is worth
+building: pinning the live Supertrend lights up two Long entry rules *and* two Exit rules that can
+never run. "This rule reads Supertrend" is a fact about the rule definition — true whether or not
+anything evaluates it — so naming it is honest, while resolving a value for it would not be. The
+backend keeps those separate on purpose (`SourceRegistry.Touch` vs `Fill`): an input can only
+become "backed" by actually having been read, never by being referenced.
+
 ## The rule row: an outcome with its receipts
 
 A rule row is not a sentence with a verdict stapled on — it's a comparison you can check. Three
@@ -180,3 +227,8 @@ a *live* Entry Rules card but are themselves each individually tagged unknown).
 - [ ] New interactive state survives the 5s refresh (skip-if-unchanged + restore-after-rebuild)
 - [ ] Rows sized with a **container** query, not a media query — the same row renders full-width
       and inside a ~420px fork column
+- [ ] Unbacked source cards use `.placeholder-node`'s dashed treatment — same honesty, same look
+- [ ] A source card shows the input's own value, never a value the rule derives from it
+- [ ] `FeedsRules` counts never-evaluated rules too — a dead branch reading a live input is the
+      relationship the rail exists to show
+- [ ] An input becomes `backed` only by being read (`Fill`), never by being referenced (`Touch`)

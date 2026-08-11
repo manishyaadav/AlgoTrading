@@ -138,6 +138,30 @@ each rule that *is* backed would fill a drawer with real-looking evidence for a 
 evaluated; empty evidence is the honest shape, and the dashboard renders those rules in their
 original compact one-line form.
 
+**`sources` — the inputs behind the whole tree.** Alongside the rules, the response carries a flat
+`DataSource[]` of every live input the evaluator touches, and every rule and gate carries
+`sourceIds` linking to it. This is what lets the dashboard show the data flow rather than only the
+verdicts: which inputs are real right now, how many rules read each one, and which rules are
+reading something nothing feeds.
+
+Built by `Engine/SourceRegistry.cs`, deliberately in two steps:
+
+- **`Touch`** names a dependency, derived from the rule definition alone with no Redis involved.
+  Called for **every** rule including never-evaluated ones — "this rule reads Supertrend" is a fact
+  about the rule, true whether or not anything evaluates it.
+- **`Fill`** attaches a value that was actually read, and is the only thing that sets `backed`.
+
+Keeping them separate is what stops "this rule reads Supertrend" from being confused with
+"Supertrend has a value right now". An input that is only ever Touched stays `backed: false` and is
+drawn dashed and valueless — including the synthetic `Position / order state` entry, which exists
+purely to be unbacked and to carry the count of rules depending on it.
+
+`Engine/RuleEvaluator.ClassifySource()` is the single source of truth for source identity: the
+resolvers use it to name what they just read, and the never-evaluated branches use it to name what
+they *would* read, so both land on the same entry. Note that operands typed `Literal` are never
+sources — they're part of the rule, not an input — so a strategy that mistypes account state as a
+`Literal` will not show it in this list.
+
 ```bash
 curl http://localhost:8096/api/strategies/second-income/rule-status
 ```

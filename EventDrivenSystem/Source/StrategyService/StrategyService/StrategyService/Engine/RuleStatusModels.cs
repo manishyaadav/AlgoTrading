@@ -34,16 +34,44 @@ namespace StrategyService.Engine
         string Status,          // "pass" | "fail" | "unknown"
         OperandEvidence Left,
         OperandEvidence Right,
-        string? Reason);        // populated only when Status == "unknown"
+        string? Reason,         // populated only when Status == "unknown"
+        List<string> SourceIds); // DataSource.Id for every input this rule reads, deduped
 
     public record ValueChip(string Key, string Value, string? Tone); // Tone: "pass" | "fail" | null
+
+    // One live input the rule tree depends on — the other half of the picture from RuleEvaluation.
+    // Where a rule answers "does this condition hold", a DataSource answers "what is the engine
+    // actually looking at, and is any of it real right now".
+    //
+    // Backed=false covers two genuinely different cases, and the Detail says which: an input this
+    // stack has no source for at all (position state, account capital), or one that has a source
+    // that isn't producing yet (an indicator that hasn't seeded). Both are honest "no", neither is
+    // dressed up as a value.
+    //
+    // FeedsRules counts the rules and gates that reference this input, INCLUDING ones that are
+    // never evaluated — naming what a rule would read is a fact about the rule definition, not a
+    // claim about live data, and a source feeding four rules that can never run is exactly the
+    // kind of thing this list exists to make visible.
+    public record DataSource(
+        string Id,              // short, opaque ("s1") — safe inside a space-separated DOM attribute
+        string Label,           // "Supertrend (P20 ×4)"
+        string Scope,           // "5 Minutes · Nifty_Index_Spot"
+        string Kind,            // "indicator" | "session" | "unbacked"
+        string? Value,
+        string? Detail,         // live qualifier ("Down → RED"), or why there's no value
+        string? Key,            // the Redis key, when there is one
+        string? AsOf,
+        bool Backed,
+        int FeedsRules,
+        List<EvidenceField> Fields);
 
     public record GateNode(
         string Eyebrow,
         string Title,
         string Status,          // "pass" | "fail" | "unknown"
         string Detail,
-        List<ValueChip> Values);
+        List<ValueChip> Values,
+        List<string> SourceIds);
 
     // A group of rules under one AND/OR chain (an EntryRules array, a RiskManagementRules array,
     // etc.). Live=false means the group is shown for reference only and was never evaluated —
@@ -70,5 +98,6 @@ namespace StrategyService.Engine
         RuleGroup TradingSessionRules,
         GateNode PositionGate,
         EntryExitStatus Long,
-        EntryExitStatus Short);
+        EntryExitStatus Short,
+        List<DataSource> Sources);
 }

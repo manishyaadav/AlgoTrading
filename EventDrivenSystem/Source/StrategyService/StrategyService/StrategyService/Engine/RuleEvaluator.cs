@@ -21,6 +21,11 @@ namespace StrategyService.Engine
         // was derived from. An unresolved operand still carries Source when we know which key we
         // looked for and simply didn't find (or found unseeded) — "we checked here and it wasn't
         // there" is a materially more useful answer than "no idea".
+        // SourceValue/SourceDetail are what the *input* is, as opposed to what this rule does with
+        // it. Usually the same, but not always, and the difference is load-bearing: a rule reading
+        // "0.0038 × Closing Price (Previous)" displays the computed 93.42, while the input it
+        // actually reads is a prior close of 24,583.80. The source card has to show the latter, or
+        // it's captioning the wrong number. Both default to Display when there's no distinction.
         private record Resolved(
             string? Display,
             decimal? Numeric,
@@ -29,7 +34,9 @@ namespace StrategyService.Engine
             string Kind = "unresolved",
             string? Source = null,
             string? AsOf = null,
-            List<EvidenceField>? Fields = null)
+            List<EvidenceField>? Fields = null,
+            string? SourceValue = null,
+            string? SourceDetail = null)
         {
             public bool IsResolved => UnresolvedReason == null;
 
@@ -38,14 +45,93 @@ namespace StrategyService.Engine
 
             public OperandEvidence ToEvidence() =>
                 new(Display, Numeric, Kind, Source, AsOf, Fields ?? new List<EvidenceField>());
+
+            public string? CardValue => SourceValue ?? Display;
         }
 
+        // Which live input an operand reads, derived from the rule definition alone — deliberately
+        // no Redis in here. This is the single source of truth for source identity: the resolvers
+        // use it to name what they just read, and the never-evaluated branches use it to name what
+        // they *would* read. Both land on the same card, which is what makes it visible that four
+        // exit rules hang off an input nothing feeds.
+        private record SourceRef(string NaturalId, string Label, string Scope, string Kind);
+
         private static readonly Regex MultiplierExpression = new(@"^\s*([\d.]+)\s*\*\s*Closing Price\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static SourceRef? ClassifySource(Operand? operand)
+        {
+            if (operand == null || operand.Type == "Literal") return null;
+
+            string reference = operand.Value ?? "(empty)";
+            var props = operand.Properties;
+            string scope = props == null
+                ? ""
+                : string.Join(" · ", new[] { props.Timeframe, props.Instrument }.Where(s => !string.IsNullOrEmpty(s)));
+
+            static SourceRef Unbacked(string id, string label, string scope) => new($"unbacked:{id}", label, scope, "unbacked");
+
+            if (operand.Type == "Expression")
+            {
+                // The prior session's close is persisted on the Pivot Central Range hash, but which
+                // PCR key holds it is only discoverable at runtime — so this one is identified by
+                // instrument, letting the static and live paths agree without either guessing the
+                // timeframe segment.
+                if (MultiplierExpression.IsMatch(reference)
+                    && string.Equals(props?.RelativePosition, "Previous", StringComparison.OrdinalIgnoreCase)
+                    && props?.Instrument != null)
+                    return new($"priorclose:{props.Instrument}", "Closing Price (prev. session)", props.Instrument, "indicator");
+
+                return Unbacked(reference, reference, scope);
+            }
+
+            if (operand.Type != "Indicator") return Unbacked(reference, reference, scope);
+
+            if (props?.Instrument == null || props.Timeframe == null)
+                return Unbacked(reference, reference, scope);
+
+            // A "Previous" reference is its own input, not the current one: only the running state
+            // is kept, so nothing backs the prior bar even when the current bar is fully live.
+            if (string.Equals(props.RelativePosition, "Previous", StringComparison.OrdinalIgnoreCase))
+                return Unbacked($"{reference}:previous:{props.Timeframe}:{props.Instrument}", $"{reference} (previous bar)", scope);
+
+            string key = LiveDataSnapshot.IndicatorKey(props.Instrument, props.Timeframe, reference, props.Period, props.Multiplier);
+
+            if (string.Equals(reference, "EMA", StringComparison.OrdinalIgnoreCase))
+                return new($"ema:{key}", $"EMA (P{props.Period})", scope, "indicator");
+
+            if (string.Equals(reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
+                return new($"supertrend:{key}", $"Supertrend (P{props.Period} ×{props.Multiplier})", scope, "indicator");
+
+            if (string.Equals(reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase))
+                return new($"pcr:{key}", "Pivot Central Range", scope, "indicator");
+
+            return Unbacked($"{reference}:{props.Timeframe}:{props.Instrument}", reference, scope);
+        }
+
+        // Names every input a rule depends on and returns the ids to link it by. Deduped within the
+        // rule, so a rule comparing an input against itself counts as one dependent rather than two.
+        private static List<string> TouchSources(TradingRule rule, SourceRegistry registry)
+        {
+            var ids = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var operand in new[] { rule.LeftOperand, rule.RightOperand })
+            {
+                var source = ClassifySource(operand);
+                if (source == null || !seen.Add(source.NaturalId)) continue;
+                ids.Add(registry.Touch(source.NaturalId, source.Label, source.Scope, source.Kind));
+            }
+
+            return ids;
+        }
 
         public static async Task<RuleStatusResponse> BuildAsync(string strategyId, Strategy.Strategy strategy, LiveDataSnapshot live)
         {
             var ts = strategy.Strategies?.FirstOrDefault();
+            var registry = new SourceRegistry();
 
+            // Gate 1 reads the strategy file, not Redis — it has no live input, and gets no source
+            // card rather than a synthetic one standing in for "the deployment record".
             bool isDeployed = !string.IsNullOrEmpty(strategy.DeployedVersion);
             var deployedGate = new GateNode(
                 "Gate 1", "Strategy deployed?",
@@ -53,9 +139,17 @@ namespace StrategyService.Engine
                 isDeployed
                     ? $"{strategy.StrategyName} has a deployed version (v{strategy.DeployedVersion})."
                     : $"{strategy.StrategyName} has no deployed version — nothing below applies until it's deployed.",
-                new List<ValueChip>());
+                new List<ValueChip>(),
+                new List<string>());
 
+            string sessionSourceId = registry.Touch("session:India", "Session state", "India · country gate", "session");
             string? sessionState = await live.GetSessionStateAsync();
+            if (sessionState != null)
+                registry.Fill("session:India", sessionState, "not a holiday or weekend", "India", null,
+                    new List<EvidenceField> { new("State", sessionState) });
+            else
+                registry.FillUnresolved("session:India", "key not found — country-live/notification-live may not have run today", "India");
+
             string sessionStatus = sessionState switch
             {
                 null => "unknown",
@@ -70,25 +164,34 @@ namespace StrategyService.Engine
                     : sessionState == "Normal"
                         ? "Not a holiday, not a weekend — the day is gated open."
                         : $"Today is a {sessionState} — no session, nothing below runs.",
-                new List<ValueChip> { new("state", sessionState ?? "—", sessionStatus == "pass" ? "pass" : sessionStatus == "fail" ? "fail" : null) });
+                new List<ValueChip> { new("state", sessionState ?? "—", sessionStatus == "pass" ? "pass" : sessionStatus == "fail" ? "fail" : null) },
+                new List<string> { sessionSourceId });
 
             var tradingSessionRules = ts == null
                 ? new RuleGroup("Trading Session Rules", "unknown", true, new List<RuleEvaluation>())
-                : await EvaluateGroupAsync(ts.TradingSessionRules, live, "Trading Session Rules", isLive: true);
+                : await EvaluateGroupAsync(ts.TradingSessionRules, live, registry, "Trading Session Rules", isLive: true);
+
+            // The one source that exists purely to be unbacked. It's registered rather than left
+            // out because a card with a dashed border, no value, and a visible count of the rules
+            // depending on it says what a paragraph of caveat text can't: this isn't one missing
+            // number, it's the input the entire Exit branch hangs off.
+            string positionSourceId = registry.Touch("unbacked:position", "Position / order state", "nothing writes this", "unbacked");
+            registry.FillUnresolved("unbacked:position", "no PortfolioService, no Redis key, no topic — nothing tracks this anywhere in the stack", null);
 
             var positionGate = new GateNode(
                 "Gate 4", "In a position?",
                 "unknown",
                 "No position/order tracking exists in this stack yet — this gate has nothing real to check. The branch below is drawn assuming not in position, since that's the only branch with anything live behind it today.",
-                new List<ValueChip>());
+                new List<ValueChip>(),
+                new List<string> { positionSourceId });
 
             var longStatus = ts?.LongEntry == null
                 ? EmptyEntryExit()
-                : await EvaluateEntryExitAsync(ts.LongEntry, live);
+                : await EvaluateEntryExitAsync(ts.LongEntry, live, registry);
 
             var shortStatus = ts?.ShortEntry == null
                 ? EmptyEntryExit()
-                : await EvaluateEntryExitAsync(ts.ShortEntry, live);
+                : await EvaluateEntryExitAsync(ts.ShortEntry, live, registry);
 
             return new RuleStatusResponse(
                 strategyId,
@@ -101,7 +204,8 @@ namespace StrategyService.Engine
                 tradingSessionRules,
                 positionGate,
                 longStatus,
-                shortStatus);
+                shortStatus,
+                registry.Build());
         }
 
         private static EntryExitStatus EmptyEntryExit() => new(
@@ -109,31 +213,31 @@ namespace StrategyService.Engine
             new RuleGroup("Risk Management Rules", "unknown", false, new List<RuleEvaluation>()),
             new RuleGroup("Exit / Stop-Loss Rules", "unknown", false, new List<RuleEvaluation>()));
 
-        private static async Task<EntryExitStatus> EvaluateEntryExitAsync(EntryExitRule rules, LiveDataSnapshot live)
+        private static async Task<EntryExitStatus> EvaluateEntryExitAsync(EntryExitRule rules, LiveDataSnapshot live, SourceRegistry registry)
         {
-            var entry = await EvaluateGroupAsync(rules.EntryRules, live, "Entry Rules", isLive: true);
+            var entry = await EvaluateGroupAsync(rules.EntryRules, live, registry, "Entry Rules", isLive: true);
 
             // Risk Management / Update-Stop-Loss / Exit all depend on account or position state
             // that doesn't exist anywhere in this codebase yet (see the Position gate above) — built
             // and shown structurally for reference, deliberately never evaluated (Live: false), so
             // the page never implies a real answer it doesn't have.
-            var risk = await EvaluateGroupAsync(rules.RiskManagementRules, live, "Risk Management Rules", isLive: false);
+            var risk = await EvaluateGroupAsync(rules.RiskManagementRules, live, registry, "Risk Management Rules", isLive: false);
 
             var exitCombined = new List<TradingRule>();
             exitCombined.AddRange(rules.UpdateStopLossRules ?? new());
             exitCombined.AddRange(rules.ExitRules ?? new());
-            var exit = await EvaluateGroupAsync(exitCombined, live, "Exit / Stop-Loss Rules", isLive: false);
+            var exit = await EvaluateGroupAsync(exitCombined, live, registry, "Exit / Stop-Loss Rules", isLive: false);
 
             return new EntryExitStatus(entry, risk, exit);
         }
 
-        private static async Task<RuleGroup> EvaluateGroupAsync(List<TradingRule>? rules, LiveDataSnapshot live, string title, bool isLive)
+        private static async Task<RuleGroup> EvaluateGroupAsync(List<TradingRule>? rules, LiveDataSnapshot live, SourceRegistry registry, string title, bool isLive)
         {
             var evaluations = new List<RuleEvaluation>();
             if (rules != null)
             {
                 foreach (var rule in rules.OrderBy(r => r.Sequence))
-                    evaluations.Add(isLive ? await EvaluateRuleAsync(rule, live) : NotEvaluated(rule));
+                    evaluations.Add(isLive ? await EvaluateRuleAsync(rule, live, registry) : NotEvaluated(rule, registry));
             }
 
             string status = evaluations.Count == 0 ? "unknown" : (isLive ? AggregateStatus(evaluations) : "unknown");
@@ -144,29 +248,37 @@ namespace StrategyService.Engine
         // position/account state that doesn't exist, so reading Redis for the half of each rule
         // that *is* backed would produce a drawer full of real-looking evidence for a rule that
         // was never evaluated. Empty evidence is the honest shape here.
-        private static RuleEvaluation NotEvaluated(TradingRule rule) =>
+        //
+        // It still names its inputs, though: "this rule reads Supertrend" is a fact about the rule
+        // definition, true whether or not anything ever evaluates it, and it's what makes the
+        // dependency between a dead branch and a live input visible instead of implied.
+        private static RuleEvaluation NotEvaluated(TradingRule rule, SourceRegistry registry) =>
             new(rule, "unknown", OperandEvidence.None(), OperandEvidence.None(),
-                "not evaluated — depends on state this stack doesn't track yet");
+                "not evaluated — depends on state this stack doesn't track yet",
+                TouchSources(rule, registry));
 
-        private static async Task<RuleEvaluation> EvaluateRuleAsync(TradingRule rule, LiveDataSnapshot live)
+        private static async Task<RuleEvaluation> EvaluateRuleAsync(TradingRule rule, LiveDataSnapshot live, SourceRegistry registry)
         {
-            var left = await ResolveAsync(rule.LeftOperand, live);
-            var right = await ResolveAsync(rule.RightOperand, live);
+            // Named before resolving, so the registry entry exists for the resolvers to fill.
+            var sourceIds = TouchSources(rule, registry);
+
+            var left = await ResolveAsync(rule.LeftOperand, live, registry);
+            var right = await ResolveAsync(rule.RightOperand, live, registry);
 
             if (!left.IsResolved || !right.IsResolved)
             {
                 string reason = !left.IsResolved && !right.IsResolved
                     ? $"{left.UnresolvedReason}; {right.UnresolvedReason}"
                     : (left.UnresolvedReason ?? right.UnresolvedReason)!;
-                return new RuleEvaluation(rule, "unknown", left.ToEvidence(), right.ToEvidence(), reason);
+                return new RuleEvaluation(rule, "unknown", left.ToEvidence(), right.ToEvidence(), reason, sourceIds);
             }
 
             bool? result = Compare(left, right, rule.Operator);
             if (result == null)
                 return new RuleEvaluation(rule, "unknown", left.ToEvidence(), right.ToEvidence(),
-                    $"operator '{rule.Operator}' not supported for these value types");
+                    $"operator '{rule.Operator}' not supported for these value types", sourceIds);
 
-            return new RuleEvaluation(rule, result.Value ? "pass" : "fail", left.ToEvidence(), right.ToEvidence(), null);
+            return new RuleEvaluation(rule, result.Value ? "pass" : "fail", left.ToEvidence(), right.ToEvidence(), null, sourceIds);
         }
 
         private static bool? Compare(Resolved left, Resolved right, string? op)
@@ -233,17 +345,31 @@ namespace StrategyService.Engine
             }
         }
 
-        private static async Task<Resolved> ResolveAsync(Operand? operand, LiveDataSnapshot live)
+        private static async Task<Resolved> ResolveAsync(Operand? operand, LiveDataSnapshot live, SourceRegistry registry)
         {
             if (operand == null) return Resolved.Unresolved("missing operand");
 
-            return operand.Type switch
+            var resolved = operand.Type switch
             {
                 "Literal" => ResolveLiteral(operand.Value),
                 "Indicator" => await ResolveIndicatorAsync(operand, live),
                 "Expression" => await ResolveExpressionAsync(operand, live),
                 _ => Resolved.Unresolved($"unknown operand type '{operand.Type}'"),
             };
+
+            // One place where a reading becomes a filled-in source card, rather than every resolver
+            // remembering to report itself. Literals classify to null and are skipped — they're
+            // part of the rule, not an input the engine reads.
+            var source = ClassifySource(operand);
+            if (source != null)
+            {
+                if (resolved.IsResolved && resolved.CardValue != null)
+                    registry.Fill(source.NaturalId, resolved.CardValue, resolved.SourceDetail, resolved.Source, resolved.AsOf, resolved.Fields ?? new List<EvidenceField>());
+                else
+                    registry.FillUnresolved(source.NaturalId, resolved.UnresolvedReason, resolved.Source);
+            }
+
+            return resolved;
         }
 
         // A literal has no source and no as-of — it's part of the rule definition, not live data.
@@ -279,7 +405,8 @@ namespace StrategyService.Engine
                     Kind: "indicator",
                     Source: key,
                     AsOf: hash.GetValueOrDefault("LastBarWindowsStartTime"),
-                    Fields: Evidence(hash, "LastEma", "SeedBarsSeenSoFar"));
+                    Fields: Evidence(hash, "LastEma", "SeedBarsSeenSoFar"),
+                    SourceDetail: $"{hash.GetValueOrDefault("SeedBarsSeenSoFar")} bars seeded");
             }
 
             if (string.Equals(reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
@@ -311,7 +438,11 @@ namespace StrategyService.Engine
                     Kind: "indicator",
                     Source: key,
                     AsOf: hash.GetValueOrDefault("LastBarWindowsStartTime"),
-                    Fields: fields);
+                    Fields: fields,
+                    // The card shows the band and the trend as separate facts; the rule row shows
+                    // them fused because that's how the comparison uses them.
+                    SourceValue: FormatNumber(value),
+                    SourceDetail: color != null ? $"{direction} → {color}" : direction);
             }
 
             if (string.Equals(reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase))
@@ -329,7 +460,8 @@ namespace StrategyService.Engine
                     // PCR is a once-per-session computation, not a per-bar one — its as-of is the
                     // session it was computed for, not a bar window.
                     AsOf: hash.GetValueOrDefault("SessionDate"),
-                    Fields: Evidence(hash, "Width", "Pivot", "TopCentral", "BottomCentral"));
+                    Fields: Evidence(hash, "Width", "Pivot", "TopCentral", "BottomCentral"),
+                    SourceDetail: "width of the central range");
             }
 
             return Resolved.Unresolved($"no evaluator for indicator '{reference}' yet");
@@ -369,7 +501,12 @@ namespace StrategyService.Engine
                     {
                         new("PriorClose", close.ToString(CultureInfo.InvariantCulture)),
                         new("multiplier (from the rule)", multiplier.ToString(CultureInfo.InvariantCulture)),
-                    });
+                    },
+                    // The input here is the prior close, NOT the multiplied result — the multiplier
+                    // belongs to the rule, not to the data. A card captioned 93.42 would be
+                    // labelling a number that exists nowhere in Redis.
+                    SourceValue: FormatNumber(close),
+                    SourceDetail: "previous session's close");
             }
 
             return Resolved.Unresolved($"no data source for '{value}' yet");

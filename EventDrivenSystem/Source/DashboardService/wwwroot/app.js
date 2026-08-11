@@ -1145,7 +1145,7 @@ function gateNodeHtml(gate, stageClass) {
   ).join("");
 
   return `
-    <div class="rule-node ${stageClass || ""}">
+    <div class="rule-node gate ${stageClass || ""}" data-sources="${esc((gate.sourceIds || []).join(" "))}">
       <div class="node-head">
         <div>
           <div class="node-eyebrow">${esc(gate.eyebrow)}</div>
@@ -1276,9 +1276,13 @@ function ruleEvalRowHtml(ev, key) {
   // a "—" under every operand — three lines of blank where there used to be one line of rule, and
   // a static preview column taller than the live one beside it. The new layout is for rules that
   // have something to show; these have exactly as much to say as they did before.
+  // Every row carries its inputs, including the never-evaluated ones — a dead branch reading a
+  // live input is precisely the relationship the source rail exists to show.
+  const sources = `data-sources="${esc((ev.sourceIds || []).join(" "))}"`;
+
   if (!hasEvidence(ev)) {
     return `
-      <div class="eval-row ${ev.status} compact" data-rule-key="${esc(key)}">
+      <div class="eval-row ${ev.status} compact" data-rule-key="${esc(key)}" ${sources}>
         <div class="eval-main">
           <span class="rule-text">${describeRule(ev.rule)}</span>
           ${tag}
@@ -1290,7 +1294,7 @@ function ruleEvalRowHtml(ev, key) {
   const drawer = `<button class="evidence-toggle" data-rule-key="${esc(key)}" aria-expanded="${open}" title="Where these values came from">▾</button>`;
 
   return `
-    <div class="eval-row ${ev.status}" data-rule-key="${esc(key)}">
+    <div class="eval-row ${ev.status}" data-rule-key="${esc(key)}" ${sources}>
       <div class="eval-main">
         <div class="rule-compare">
           ${operandSideHtml(ev.rule.leftOperand, ev.left, "left")}
@@ -1347,6 +1351,46 @@ function exitColumnHtml(entryExit, side) {
     </div>`;
 }
 
+/* ── Source rail ──────────────────────────────────────────────────────────
+   The other half of the page: the rules say what would be decided, the rail says what the engine
+   is actually looking at and whether any of it is real. An input with no source is drawn dashed
+   and valueless but still counts the rules depending on it — the Position card feeding a whole
+   dead Exit branch is the clearest single statement of what this stack can and can't do yet. */
+
+function sourceCardHtml(src) {
+  const value = src.backed
+    ? `<div class="src-value">${esc(src.value)}</div>`
+    : `<div class="src-value none">no value</div>`;
+
+  return `
+    <button type="button" class="source-card ${src.backed ? "backed" : "unbacked"}" data-source-id="${esc(src.id)}"
+            title="${esc(src.key || src.detail || "")}">
+      <div class="src-head">
+        <span class="src-label">${esc(src.label)}</span>
+        <span class="src-feeds" title="rules and gates reading this">${src.feedsRules}</span>
+      </div>
+      ${src.scope ? `<div class="src-scope">${esc(src.scope)}</div>` : ""}
+      ${value}
+      ${src.detail ? `<div class="src-detail">${esc(src.detail)}</div>` : ""}
+      ${src.asOf ? `<div class="src-asof">${esc(src.asOf)}</div>` : ""}
+    </button>`;
+}
+
+function sourceRailHtml(sources) {
+  const list = sources || [];
+  const backed = list.filter(s => s.backed).length;
+
+  return `
+    <aside class="source-rail">
+      <div class="rail-head">
+        <div class="rail-title">Live inputs</div>
+        <div class="rail-count">${backed} of ${list.length} backed</div>
+      </div>
+      <div class="source-list">${list.map(sourceCardHtml).join("")}</div>
+      <div class="rail-note">Hover an input to see which rules read it. Click to pin.</div>
+    </aside>`;
+}
+
 function ruleEngineFlowHtml(data) {
   const sideBlock = (label, entryExit, side) => `
     <div class="rule-side">
@@ -1366,6 +1410,10 @@ function ruleEngineFlowHtml(data) {
       <span class="badge deployed">Deployed v${esc(data.deployedVersion || "—")}</span>
     </div>
 
+    <div class="rule-workspace">
+      <svg class="link-layer" aria-hidden="true"></svg>
+      ${sourceRailHtml(data.sources)}
+      <div class="rule-tree">
     <div class="flow">
       ${gateNodeHtml(data.deployedGate)}
       <div class="connector ${data.deployedGate.status}"></div>
@@ -1395,8 +1443,126 @@ function ruleEngineFlowHtml(data) {
       <span><span class="dot unknown"></span>Unknown — no data source exists for this yet</span>
       <span><span class="dot neutral"></span>▾ opens the exact Redis key and raw fields the value came from</span>
     </div>
+      </div>
+    </div>
   `;
 }
+
+/* ── Source ↔ rule linking ───────────────────────────────────────────────
+   Hovering either side highlights the other and draws the connection. Pinning (click) exists
+   because hovering can't survive scrolling, and the tree is far taller than a viewport — without
+   it you could never actually follow a source down to the rules at the bottom. */
+
+let ruleEnginePinnedSource = null;
+let ruleEngineLinkFrame = null;
+
+// Curves from each linked input to each rule that reads it. Only to rows currently on screen — a
+// bezier to something 3000px below is noise, not information, and the highlight already carries
+// the relationship for everything off-screen.
+function drawSourceLinks(ids) {
+  const wrap = document.querySelector(".rule-workspace");
+  const svg = wrap && wrap.querySelector(".link-layer");
+  if (!svg) return;
+
+  const base = wrap.getBoundingClientRect();
+  svg.setAttribute("viewBox", `0 0 ${base.width} ${base.height}`);
+  svg.style.width = `${base.width}px`;
+  svg.style.height = `${base.height}px`;
+
+  if (!ids || !ids.length) { svg.innerHTML = ""; return; }
+
+  const paths = [];
+  for (const id of ids) {
+    const card = wrap.querySelector(`.source-card[data-source-id="${id}"]`);
+    if (!card) continue;
+
+    const c = card.getBoundingClientRect();
+    const x1 = c.right - base.left;
+    const y1 = c.top + c.height / 2 - base.top;
+    let drewAny = false;
+
+    for (const row of wrap.querySelectorAll(`[data-sources~="${id}"]`)) {
+      const r = row.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) continue;
+
+      const x2 = r.left - base.left;
+      const y2 = r.top + Math.min(r.height / 2, 22) - base.top;
+      const bend = Math.max(18, (x2 - x1) * 0.55);
+      paths.push(
+        `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1 + bend).toFixed(1)},${y1.toFixed(1)} ${(x2 - bend).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}"/>` +
+        `<circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="2.5"/>`);
+      drewAny = true;
+    }
+
+    // Only once, and only if something was actually reached — a dot on the card with no line
+    // leaving it would suggest a connection that isn't being drawn.
+    if (drewAny) paths.push(`<circle cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3"/>`);
+  }
+
+  svg.innerHTML = paths.join("");
+}
+
+function applySourceLink(ids) {
+  const wrap = document.querySelector(".rule-workspace");
+  if (!wrap) return;
+
+  wrap.querySelectorAll(".linked").forEach(el => el.classList.remove("linked"));
+
+  if (!ids || !ids.length) {
+    wrap.classList.remove("linking");
+    drawSourceLinks(null);
+    return;
+  }
+
+  wrap.classList.add("linking");
+  for (const id of ids) {
+    wrap.querySelectorAll(`.source-card[data-source-id="${id}"], [data-sources~="${id}"]`)
+      .forEach(el => el.classList.add("linked"));
+  }
+  drawSourceLinks(ids);
+}
+
+function ruleEngineHoverLink(ids) {
+  if (ruleEnginePinnedSource) return; // a pin owns the highlight until it's cleared
+  applySourceLink(ids);
+}
+
+(function wireSourceLinking() {
+  const root = document.getElementById("rule-engine-content");
+
+  // One bubbling mouseover rather than enter/leave pairs: moving between a row and the small
+  // elements inside it would otherwise fire a leave-then-enter and flicker the whole highlight.
+  // Landing on anything that isn't a card or a rule with inputs clears it.
+  root.addEventListener("mouseover", ev => {
+    const card = ev.target.closest(".source-card");
+    if (card) return ruleEngineHoverLink([card.dataset.sourceId]);
+
+    const consumer = ev.target.closest("[data-sources]");
+    const ids = consumer ? (consumer.dataset.sources || "").split(" ").filter(Boolean) : [];
+    ruleEngineHoverLink(ids.length ? ids : null);
+  });
+
+  root.addEventListener("mouseleave", () => ruleEngineHoverLink(null));
+
+  root.addEventListener("click", ev => {
+    const card = ev.target.closest(".source-card");
+    if (!card) return;
+
+    const id = card.dataset.sourceId;
+    ruleEnginePinnedSource = ruleEnginePinnedSource === id ? null : id;
+    applySourceLink(ruleEnginePinnedSource ? [ruleEnginePinnedSource] : null);
+  });
+
+  // A pinned link has to keep pointing at the right rows while you scroll to find them — that's
+  // the entire reason pinning exists. rAF-throttled so it costs one recompute per frame at most.
+  window.addEventListener("scroll", () => {
+    if (!ruleEnginePinnedSource || ruleEngineLinkFrame) return;
+    ruleEngineLinkFrame = requestAnimationFrame(() => {
+      ruleEngineLinkFrame = null;
+      drawSourceLinks([ruleEnginePinnedSource]);
+    });
+  }, { passive: true });
+})();
 
 // Evidence drawers are toggled by delegation off the page container, so the handler survives the
 // re-render — binding per button would leave dead listeners on every refresh that replaces them.
@@ -1441,6 +1607,10 @@ async function loadRuleEngine() {
     if (payload !== ruleEngineLastPayload) {
       ruleEngineLastPayload = payload;
       el.innerHTML = ruleEngineFlowHtml(status);
+      // Same contract as the drawers: a rebuild restores what the user had going, it doesn't
+      // reset them. A pin dropped on every bar close would make the rail unusable for exactly
+      // the tracing it exists for.
+      if (ruleEnginePinnedSource) applySourceLink([ruleEnginePinnedSource]);
     }
     errEl.hidden = true;
   } catch (err) {
