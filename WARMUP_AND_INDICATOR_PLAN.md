@@ -18,6 +18,8 @@ See `EventDrivenSystem/Source/StrategyService/README.md` for full detail on both
 **`WarmUpService`** (new service, first cut — see `EventDrivenSystem/Source/WarmUpService/README.md`):
 - Consumes `live-exchange-workflow-topic`, filters to NSE `Init` only.
 - Calls `strategy-live`'s `warm-up-plan` endpoint and, for each requirement, checks whether Redis already has the corresponding indicator state — reports present/missing per requirement via structured logs.
+
+**`ohlc-live`**: `GET /api/HistoricalSufficiency` — see section 2d below for detail. Not yet wired into `WarmUpService`'s own check.
 - **Does not fetch anything yet** — every "missing" case is a clearly-labeled placeholder, blocked on `ohlc-live`'s validation capability (2d) and `AggregationService`'s calculators (2e), neither built yet. This first cut proved the orchestration (Init → plan → Redis check) works end to end; the actual fetch path is the natural next piece of section 2b below.
 - Verified live via both the real Kafka-triggered path (a synthetic NSE `Init` message) and a manual HTTP trigger (`POST /api/warmup/run`, for testing without waiting for the next real `Init`).
 
@@ -57,11 +59,13 @@ Reacts to NSE's `Init` only (not NFO — this whole effort is index/spot-scoped 
 - **Server-side enforced**, in the function itself — a dashboard-only disabled button is a nicety on top, not a substitute (trivially bypassed via curl).
 - Only blocks `Deploy`, not `Save` — editing/saving a draft never affects anything live, so there's no safety reason to restrict it.
 
-### 2d. `ohlc-live`: historical-sufficiency validation
+### 2d. `ohlc-live`: historical-sufficiency validation ✅ **Shipped**
 
-New capability: "given this instrument and N days needed, does Azurite actually have that much?" Lives in `ohlc-live` because it already owns the Azurite connection and historical-query logic — no reason for `WarmUpService` to duplicate that.
+`GET /api/HistoricalSufficiency` — "given this instrument and N days needed, does Azurite actually have that much?" Lives in `ohlc-live` because it already owns the Azurite connection and historical-query logic. Existence-only, checked against the **monthly rollup blob** (`{year}/{month}/{blobName}.csv`) — the day-level folders alongside it hold the current month's data broken out per day, but are transient (purged once the month completes), while the monthly file is cumulative for that whole month and permanent. Confirms the day's month has a file, not that the specific day's data is inside it. Weekends skipped, no holiday-calendar awareness (kept self-contained — `ohlc-live` has no Redis dependency today). NFO contract name recomputed per day checked, since a lookback window can cross a monthly contract-roll boundary; days landing in the same month share one check (memoized). See `EventDrivenSystem/Source/HistoricaDataService/OHLCFunctionApp/README.md`.
 
-Designed to be a **reusable capability**, not a private step only `WarmUpService` calls — see [Parked](#4-parked--deferred-revisit-when-reached) for the other callers this should eventually have (dashboard, `StrategyService` deploy-time warning, future Backtest).
+Built as a **reusable capability**, not a private step only `WarmUpService` calls — not yet wired into `WarmUpService`'s own check (that's still 2b step 3, blocked on 2e below too) or into the other callers this should eventually have (dashboard, `StrategyService` deploy-time warning, future Backtest — see [Parked](#4-parked--deferred-revisit-when-reached)).
+
+First version of this endpoint checked the day-level (transient) path instead of the monthly rollup — every date in a completed month read as "missing" even though the permanent record was sitting one directory up. Caught and fixed live against real data before merging. `GetOHLCByYearAndMonth`/`GetOHLCDataByDate` (pre-existing `ohlc-live` routes) were never broken — they'd always read the correct monthly path; the confusion was entirely on this new endpoint's side.
 
 ### 2e. `AggregationService`: indicator computation
 
