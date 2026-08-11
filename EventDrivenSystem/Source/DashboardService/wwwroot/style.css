@@ -1400,6 +1400,44 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   .link-layer { display: none; }
 }
 
+/* Only rendered when 2+ strategies are deployed at once (loadRuleEngine hides/empties it
+   otherwise) — one deployed strategy has nothing to switch between, so the single-strategy case
+   stays exactly as it looked before this existed. Chips wrap rather than scroll: a handful of
+   deployed strategies is the expected scale, not a long list that needs its own scroller. */
+.strategy-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.strategy-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+.strategy-chip:hover { border-color: var(--line); }
+.strategy-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.chip-name {
+  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 13px;
+}
+.strategy-chip.active .chip-name { color: var(--accent); }
+.chip-meta { font-size: 11px; color: var(--muted); }
+
 .identity {
   display: flex; align-items: center; gap: 12px;
   background: var(--surface);

@@ -1581,21 +1581,56 @@ document.getElementById("rule-engine-content").addEventListener("click", ev => {
   if (open) ruleEngineOpenRows.add(key); else ruleEngineOpenRows.delete(key);
 });
 
+// Which deployed strategy's tree is on screen — module-level so it survives the 5s poll cycle
+// (the whole point is that switching strategies is a user action, not something a refresh should
+// reset). Reconciled against the live deployed list on every load: if the selection deployed
+// strategy disappears (undeployed/deleted), loadRuleEngine falls back to the first one available.
+let ruleEngineSelectedId = null;
+let ruleEngineSwitcherPayload = null;
+
+function strategySwitcherHtml(deployedStrategies, selectedId) {
+  if (deployedStrategies.length < 2) return ""; // one deployed strategy: a switcher has nothing to switch between
+  return deployedStrategies.map(s => `
+    <button type="button" class="strategy-chip ${s.id === selectedId ? "active" : ""}" data-strategy-id="${esc(s.id)}">
+      <span class="chip-name">${esc(s.strategyName)}</span>
+      <span class="chip-meta">${esc((s.instruments || []).join(", "))}</span>
+      <span class="badge deployed">v${esc(s.deployedVersion || "—")}</span>
+    </button>`).join("");
+}
+
 async function loadRuleEngine() {
   const el = document.getElementById("rule-engine-content");
   const errEl = document.getElementById("rule-engine-error");
+  const switcherEl = document.getElementById("rule-engine-switcher");
   try {
     const strategies = await fetchJson(`${STRATEGY_API_BASE}/api/strategies`);
-    const deployed = (strategies || []).find(s => s.deployedVersion);
+    const deployed = (strategies || []).filter(s => s.deployedVersion);
 
-    if (!deployed) {
+    if (deployed.length === 0) {
       el.innerHTML = `<div class="hint">No deployed strategy yet — deploy one from the Strategy page first.</div>`;
       ruleEngineLastPayload = null;
+      switcherEl.hidden = true;
+      switcherEl.innerHTML = "";
+      ruleEngineSwitcherPayload = null;
+      ruleEngineSelectedId = null;
       errEl.hidden = true;
       return;
     }
 
-    const status = await fetchJson(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(deployed.id)}/rule-status`);
+    // Stick with whatever the user picked as long as it's still deployed; otherwise (first load,
+    // or the selected one just got undeployed) fall back to the first deployed strategy.
+    if (!deployed.some(s => s.id === ruleEngineSelectedId)) {
+      ruleEngineSelectedId = deployed[0].id;
+    }
+
+    const switcherPayload = JSON.stringify({ deployed: deployed.map(s => [s.id, s.strategyName, s.deployedVersion]), selected: ruleEngineSelectedId });
+    if (switcherPayload !== ruleEngineSwitcherPayload) {
+      ruleEngineSwitcherPayload = switcherPayload;
+      switcherEl.innerHTML = strategySwitcherHtml(deployed, ruleEngineSelectedId);
+      switcherEl.hidden = deployed.length < 2;
+    }
+
+    const status = await fetchJson(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(ruleEngineSelectedId)}/rule-status`);
 
     // The 5s refresh used to blow away and rebuild this whole subtree every tick, which made any
     // interaction on the page impossible to sustain — an open drawer, a text selection, even a
@@ -1618,6 +1653,19 @@ async function loadRuleEngine() {
     errEl.textContent = `Unable to load: ${err.message}`;
   }
 }
+
+// Delegated the same way the evidence drawers are (see below) — bound once at load, survives the
+// switcher being re-rendered on every strategy list change.
+document.getElementById("rule-engine-switcher").addEventListener("click", ev => {
+  const chip = ev.target.closest(".strategy-chip");
+  if (!chip || chip.classList.contains("active")) return;
+
+  ruleEngineSelectedId = chip.dataset.strategyId;
+  ruleEnginePinnedSource = null; // a pin from the previous strategy's tree means nothing here
+  ruleEngineLastPayload = null; // force the flow to redraw even if the new strategy's status JSON
+                                 // happens to collide with whatever was cached from the last one
+  loadRuleEngine();
+});
 
 function strategyError(message) {
   const el = document.getElementById("strategy-error");
