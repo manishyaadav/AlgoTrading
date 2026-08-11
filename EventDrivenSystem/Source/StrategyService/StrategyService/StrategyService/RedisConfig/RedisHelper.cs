@@ -40,16 +40,18 @@ namespace StrategyService.RedisConfig
             return hash.ToDictionary(h => h.Name.ToString(), h => h.Value.ToString());
         }
 
-        // Finds the first key matching `pattern` and returns its Hash — used where the caller
-        // knows the instrument but not the exact Timeframe segment of the key (see
+        // Finds the first key matching `pattern` and returns it along with its Hash — used where
+        // the caller knows the instrument but not the exact Timeframe segment of the key (see
         // LiveDataSnapshot.GetPriorCloseAsync). Same discovery idiom DashboardService's
-        // DiscoverTickers uses: whatever's actually in Redis drives the lookup, not a guess.
-        public async Task<Dictionary<string, string>?> ScanIndicatorHashAsync(string pattern)
+        // DiscoverTickers uses: whatever's actually in Redis drives the lookup, not a guess. The
+        // key comes back with the hash because the caller can't otherwise know which one matched,
+        // and the Rule Engine page cites it as the value's source.
+        public async Task<(string Key, Dictionary<string, string> Hash)?> ScanIndicatorHashWithKeyAsync(string pattern)
         {
             var server = _redis.GetServer(_redis.GetEndPoints().First());
             await foreach (var key in server.KeysAsync(pattern: pattern))
             {
-                return await GetHashAsync(key.ToString());
+                return (key.ToString(), await GetHashAsync(key.ToString()));
             }
             return null;
         }

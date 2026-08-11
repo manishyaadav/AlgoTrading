@@ -15,10 +15,29 @@ namespace StrategyService.Engine
         // its band value compares numerically against EMA, its GREEN/RED compares as text against
         // a Literal). Null Numeric/Text with a non-null UnresolvedReason means nothing backs this
         // operand today.
-        private record Resolved(string? Display, decimal? Numeric, string? Text, string? UnresolvedReason)
+        //
+        // Kind/Source/AsOf/Fields are the provenance the dashboard's evidence drawer shows: which
+        // Redis key was actually read, which bar it belongs to, and the raw hash entries the value
+        // was derived from. An unresolved operand still carries Source when we know which key we
+        // looked for and simply didn't find (or found unseeded) — "we checked here and it wasn't
+        // there" is a materially more useful answer than "no idea".
+        private record Resolved(
+            string? Display,
+            decimal? Numeric,
+            string? Text,
+            string? UnresolvedReason,
+            string Kind = "unresolved",
+            string? Source = null,
+            string? AsOf = null,
+            List<EvidenceField>? Fields = null)
         {
             public bool IsResolved => UnresolvedReason == null;
-            public static Resolved Unresolved(string reason) => new(null, null, null, reason);
+
+            public static Resolved Unresolved(string reason, string? source = null) =>
+                new(null, null, null, reason, "unresolved", source);
+
+            public OperandEvidence ToEvidence() =>
+                new(Display, Numeric, Kind, Source, AsOf, Fields ?? new List<EvidenceField>());
         }
 
         private static readonly Regex MultiplierExpression = new(@"^\s*([\d.]+)\s*\*\s*Closing Price\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -121,8 +140,13 @@ namespace StrategyService.Engine
             return new RuleGroup(title, status, isLive, evaluations);
         }
 
+        // Deliberately resolves nothing at all — not even the operands. These groups depend on
+        // position/account state that doesn't exist, so reading Redis for the half of each rule
+        // that *is* backed would produce a drawer full of real-looking evidence for a rule that
+        // was never evaluated. Empty evidence is the honest shape here.
         private static RuleEvaluation NotEvaluated(TradingRule rule) =>
-            new(rule, "unknown", null, null, "not evaluated — depends on state this stack doesn't track yet");
+            new(rule, "unknown", OperandEvidence.None(), OperandEvidence.None(),
+                "not evaluated — depends on state this stack doesn't track yet");
 
         private static async Task<RuleEvaluation> EvaluateRuleAsync(TradingRule rule, LiveDataSnapshot live)
         {
@@ -134,14 +158,15 @@ namespace StrategyService.Engine
                 string reason = !left.IsResolved && !right.IsResolved
                     ? $"{left.UnresolvedReason}; {right.UnresolvedReason}"
                     : (left.UnresolvedReason ?? right.UnresolvedReason)!;
-                return new RuleEvaluation(rule, "unknown", left.Display, right.Display, reason);
+                return new RuleEvaluation(rule, "unknown", left.ToEvidence(), right.ToEvidence(), reason);
             }
 
             bool? result = Compare(left, right, rule.Operator);
             if (result == null)
-                return new RuleEvaluation(rule, "unknown", left.Display, right.Display, $"operator '{rule.Operator}' not supported for these value types");
+                return new RuleEvaluation(rule, "unknown", left.ToEvidence(), right.ToEvidence(),
+                    $"operator '{rule.Operator}' not supported for these value types");
 
-            return new RuleEvaluation(rule, result.Value ? "pass" : "fail", left.Display, right.Display, null);
+            return new RuleEvaluation(rule, result.Value ? "pass" : "fail", left.ToEvidence(), right.ToEvidence(), null);
         }
 
         private static bool? Compare(Resolved left, Resolved right, string? op)
@@ -221,12 +246,14 @@ namespace StrategyService.Engine
             };
         }
 
+        // A literal has no source and no as-of — it's part of the rule definition, not live data.
+        // The drawer says exactly that rather than leaving the side looking unexplained.
         private static Resolved ResolveLiteral(string? value)
         {
             if (value == null) return Resolved.Unresolved("literal has no value");
             if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var num))
-                return new Resolved(value, num, null, null);
-            return new Resolved(value, null, value, null);
+                return new Resolved(value, num, null, null, Kind: "literal");
+            return new Resolved(value, null, value, null, Kind: "literal");
         }
 
         private static async Task<Resolved> ResolveIndicatorAsync(Operand operand, LiveDataSnapshot live)
@@ -241,19 +268,26 @@ namespace StrategyService.Engine
 
             if (string.Equals(reference, "EMA", StringComparison.OrdinalIgnoreCase))
             {
+                string key = LiveDataSnapshot.IndicatorKey(props.Instrument, props.Timeframe, "EMA", props.Period, props.Multiplier);
                 var hash = await live.GetIndicatorHashAsync(props.Instrument, props.Timeframe, "EMA", props.Period, props.Multiplier);
                 if (hash == null || hash.GetValueOrDefault("IsSeeded") != "true")
-                    return Resolved.Unresolved($"EMA({props.Period}) on {props.Instrument} {props.Timeframe}: not seeded yet");
+                    return Resolved.Unresolved($"EMA({props.Period}) on {props.Instrument} {props.Timeframe}: not seeded yet", key);
                 if (!decimal.TryParse(hash.GetValueOrDefault("LastEma"), NumberStyles.Any, CultureInfo.InvariantCulture, out var ema))
-                    return Resolved.Unresolved($"EMA({props.Period}): value unreadable");
-                return new Resolved(FormatNumber(ema), ema, null, null);
+                    return Resolved.Unresolved($"EMA({props.Period}): value unreadable", key);
+
+                return new Resolved(FormatNumber(ema), ema, null, null,
+                    Kind: "indicator",
+                    Source: key,
+                    AsOf: hash.GetValueOrDefault("LastBarWindowsStartTime"),
+                    Fields: Evidence(hash, "LastEma", "SeedBarsSeenSoFar"));
             }
 
             if (string.Equals(reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
             {
+                string key = LiveDataSnapshot.IndicatorKey(props.Instrument, props.Timeframe, "Supertrend", props.Period, props.Multiplier);
                 var hash = await live.GetIndicatorHashAsync(props.Instrument, props.Timeframe, "Supertrend", props.Period, props.Multiplier);
                 if (hash == null || hash.GetValueOrDefault("IsSeeded") != "true")
-                    return Resolved.Unresolved($"Supertrend({props.Period},{props.Multiplier}) on {props.Instrument} {props.Timeframe}: not seeded yet");
+                    return Resolved.Unresolved($"Supertrend({props.Period},{props.Multiplier}) on {props.Instrument} {props.Timeframe}: not seeded yet", key);
 
                 string direction = hash.GetValueOrDefault("TrendDirection") ?? "";
                 // Live Redis state only ever stores "Up"/"Down" (see SupertrendState's own doc
@@ -263,20 +297,39 @@ namespace StrategyService.Engine
                 string? color = direction switch { "Up" => "GREEN", "Down" => "RED", _ => null };
                 string bandField = direction == "Down" ? "PrevUpperBand" : "PrevLowerBand";
                 if (!decimal.TryParse(hash.GetValueOrDefault(bandField), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
-                    return Resolved.Unresolved($"Supertrend({props.Period},{props.Multiplier}): value unreadable");
+                    return Resolved.Unresolved($"Supertrend({props.Period},{props.Multiplier}): value unreadable", key);
 
                 string display = color != null ? $"{FormatNumber(value)} ({direction}→{color})" : FormatNumber(value);
-                return new Resolved(display, value, color, null);
+
+                // "band used" is the one synthetic field here, and it earns its place: which of the
+                // two stored bands *is* the Supertrend line depends entirely on TrendDirection, and
+                // that choice is invisible in the raw hash. Everything else is verbatim Redis.
+                var fields = Evidence(hash, "TrendDirection", "PrevUpperBand", "PrevLowerBand", "Atr", "PrevClose");
+                fields.Insert(1, new EvidenceField("band used", $"{bandField} (direction is {(direction == "" ? "—" : direction)})"));
+
+                return new Resolved(display, value, color, null,
+                    Kind: "indicator",
+                    Source: key,
+                    AsOf: hash.GetValueOrDefault("LastBarWindowsStartTime"),
+                    Fields: fields);
             }
 
             if (string.Equals(reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase))
             {
+                string key = LiveDataSnapshot.IndicatorKey(props.Instrument, props.Timeframe, "Pivot Central Range", 0, 0);
                 var hash = await live.GetIndicatorHashAsync(props.Instrument, props.Timeframe, "Pivot Central Range", 0, 0);
                 if (hash == null)
-                    return Resolved.Unresolved($"Pivot Central Range on {props.Instrument} {props.Timeframe}: not computed yet");
+                    return Resolved.Unresolved($"Pivot Central Range on {props.Instrument} {props.Timeframe}: not computed yet", key);
                 if (!decimal.TryParse(hash.GetValueOrDefault("Width"), NumberStyles.Any, CultureInfo.InvariantCulture, out var width))
-                    return Resolved.Unresolved("Pivot Central Range: value unreadable");
-                return new Resolved(FormatNumber(width), width, null, null);
+                    return Resolved.Unresolved("Pivot Central Range: value unreadable", key);
+
+                return new Resolved(FormatNumber(width), width, null, null,
+                    Kind: "indicator",
+                    Source: key,
+                    // PCR is a once-per-session computation, not a per-bar one — its as-of is the
+                    // session it was computed for, not a bar window.
+                    AsOf: hash.GetValueOrDefault("SessionDate"),
+                    Fields: Evidence(hash, "Width", "Pivot", "TopCentral", "BottomCentral"));
             }
 
             return Resolved.Unresolved($"no evaluator for indicator '{reference}' yet");
@@ -303,11 +356,37 @@ namespace StrategyService.Engine
                 if (priorClose == null)
                     return Resolved.Unresolved($"Closing Price (Previous) for {props.Instrument}: not available — needs Pivot Central Range to have run at least once");
 
-                decimal result = multiplier * priorClose.Value;
-                return new Resolved($"{multiplier} × {FormatNumber(priorClose.Value)} = {FormatNumber(result)}", result, null, null);
+                decimal close = priorClose.Value.Value;
+                decimal result = multiplier * close;
+
+                return new Resolved($"{multiplier} × {FormatNumber(close)} = {FormatNumber(result)}", result, null, null,
+                    Kind: "expression",
+                    // PriorClose is persisted on the PCR hash, so that's genuinely where this came
+                    // from — citing the PCR key rather than inventing a "Closing Price" one keeps
+                    // the drawer pointing at a key that actually exists.
+                    Source: priorClose.Value.SourceKey,
+                    Fields: new List<EvidenceField>
+                    {
+                        new("PriorClose", close.ToString(CultureInfo.InvariantCulture)),
+                        new("multiplier (from the rule)", multiplier.ToString(CultureInfo.InvariantCulture)),
+                    });
             }
 
             return Resolved.Unresolved($"no data source for '{value}' yet");
+        }
+
+        // Picks named fields out of a Redis hash in the order given, skipping any that aren't
+        // there. Values stay exactly as stored — the drawer's job is to show what's in Redis, so
+        // rounding or reformatting here would quietly undermine the one thing it's for.
+        private static List<EvidenceField> Evidence(Dictionary<string, string> hash, params string[] names)
+        {
+            var fields = new List<EvidenceField>();
+            foreach (var name in names)
+            {
+                if (hash.TryGetValue(name, out var value) && !string.IsNullOrEmpty(value))
+                    fields.Add(new EvidenceField(name, value));
+            }
+            return fields;
         }
 
         private static string FormatNumber(decimal value) => value.ToString("N2", CultureInfo.InvariantCulture);

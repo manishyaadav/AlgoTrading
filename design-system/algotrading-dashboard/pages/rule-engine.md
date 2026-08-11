@@ -44,6 +44,81 @@ seeing everything at once" — hiding Short behind a click while looking at Long
 the two sides are short enough (2 entry rules, 2 risk rules, 5 exit rules each in the real deployed
 strategy) that stacking costs a scroll, not real cognitive load.
 
+## The rule row: an outcome with its receipts
+
+A rule row is not a sentence with a verdict stapled on — it's a comparison you can check. Three
+parts, matching the `1fr auto 1fr` shape the Strategy page's rule *editor* already uses for the
+same three parts, so a rule reads the same way whether you're writing it or watching it run:
+
+```
+Supertrend (P20, x4, 5 Minutes, Nifty_Index_Spot)
+24,480.34 (Down→RED)
+    [ > ]                                    AND   Fail   ▾
+EMA (P550, 5 Minutes, Nifty_Index_Spot)
+24,514.07
+Δ 33.73   33.73 away from passing   ▬▬▬▬▬▬▬▬   2.26× ATR
+```
+
+- **The live value sits directly under the operand it resolved from** (`.cmp-value`, Fira Code,
+  tabular). A Literal renders its name once and labels itself `literal` in the muted voice instead
+  of repeating itself — "GREEN / GREEN" would read like two independent facts agreeing.
+- **The operator carries the outcome tint, not the operand values.** In `A > B` neither side is
+  individually right or wrong; the comparison between them is. Tinting one value green would be
+  asserting something the data doesn't say.
+- **The gap readout is the point of the whole page.** "Fail" tells you the rule doesn't hold; `Δ
+  33.73` tells you it's about to. Only drawn when both sides genuinely resolved to numbers — a text
+  comparison (`Supertrend == GREEN`) has no meaningful distance, and neither does an unresolved
+  side.
+- **The bar is scaled to ATR and says so.** This is the one honesty constraint that shaped the
+  design: a bar needs a scale, and 33.73 points is only "close" or "far" relative to something.
+  ATR is the one real volatility unit available (it's already on the Supertrend hash), so the track
+  runs 0–3× ATR and labels the multiple. **When no ATR is available there is no honest scale, so
+  there is no bar** — the numbers show alone rather than a bar implying a range nobody defined.
+
+## The evidence drawer: lineage, not a tooltip
+
+`▾` on each row opens `.evidence` — for each side: the **exact Redis key** read, the **bar window**
+the value belongs to, and the **raw hash fields** it was derived from, verbatim and unrounded. This
+is the page's answer to "why does it think RED", and it deliberately distinguishes three different
+kinds of "why":
+
+| What you see | What it means |
+|---|---|
+| `redis  Indicator:Running:…` | Read from live data — here's exactly where |
+| `from the rule definition — not live data` | A literal. There is no source because there's nothing to fetch |
+| `looked in  Indicator:Running:…` | We know where this lives, checked, and it wasn't there / wasn't seeded |
+| `no source in this stack yet` | Nothing anywhere backs this operand |
+
+The one synthetic field is Supertrend's `band used` — which of the two stored bands *is* the
+Supertrend line depends on `TrendDirection`, and that derivation is invisible in the raw hash.
+Everything else is copied straight out of Redis; rounding it here would defeat the point.
+
+**Never-evaluated rules get no drawer and keep their original compact one-line form.** Giving the
+Exit/Risk branches the resolved-value anatomy would mean a `—` under every operand: three lines of
+blank where there was one line of rule, and a static preview column taller than the live one beside
+it. The visual gap between a live row and a preview row is now itself the signal.
+
+## Interaction has to survive the refresh
+
+The page refreshes every 5s. It used to rebuild this entire subtree on every tick, which made
+sustained interaction impossible — an open drawer, a text selection, even a hover survived at most
+five seconds. Two rules now:
+
+1. **An unchanged payload touches the DOM not at all.** Indicators only actually move on a bar
+   close (5 minutes for the deployed strategy), so the overwhelming majority of ticks are identical
+   and are skipped by comparing the serialized response.
+2. **A changed payload rebuilds, then restores.** Open drawers are tracked by a stable
+   `scope:sequence` key (`long:entry:2`) in `ruleEngineOpenRows` and reopened after the rebuild.
+
+Any future interactive state on this page has to answer the same question before it ships.
+
+## Naming: `.eval-row`, not `.rule-row`
+
+The Strategy page's rule *editor* already owns `.rule-row`. The first version of this page defined
+`.rule-row` again, later in the same stylesheet — which silently restyled the editor's rows on the
+other page. Two different components get two different names; check for an existing owner before
+reusing a class name here.
+
 ## Status vocabulary: Pass/Fail/Unknown, not On-Track/Behind/Pending
 
 Same three semantic colors as the rest of the app (`--green`/`--red`/`--muted`, via
@@ -99,3 +174,9 @@ a *live* Entry Rules card but are themselves each individually tagged unknown).
 - [ ] Long and Short both render in full, always, never behind a tab/toggle
 - [ ] `RULE_STATUS_LABELS` stays separate from `STATUS_LABELS` — same colors, different words, on
       purpose
+- [ ] The gap bar is only drawn against a **named** scale (ATR today). No scale → no bar
+- [ ] Evidence `fields` are verbatim Redis values — never rounded or reformatted for display
+- [ ] Never-evaluated rules keep the compact one-line form and get no drawer
+- [ ] New interactive state survives the 5s refresh (skip-if-unchanged + restore-after-rebuild)
+- [ ] Rows sized with a **container** query, not a media query — the same row renders full-width
+      and inside a ~420px fork column

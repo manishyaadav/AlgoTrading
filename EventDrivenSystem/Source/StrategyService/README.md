@@ -111,10 +111,32 @@ tree, honestly labeled as such rather than pretending to have an answer.
 Response shape: `{ strategyId, strategyName, exchange, instruments, deployedVersion, deployedGate,
 sessionGate, tradingSessionRules, positionGate, long: {entryRules, riskManagementRules,
 exitBranch}, short: {...} }`. Each evaluated rule carries the *original* `TradingRule` (same shape
-`GetStrategy` already returns) plus `status` (`"pass"`/`"fail"`/`"unknown"`), `leftResolved`/
-`rightResolved` (display strings), and `reason` (only when unknown) — the dashboard reuses its
-existing `describeRule()`/`describeOperand()` for the rule text rather than this service
-formatting it twice.
+`GetStrategy` already returns) plus `status` (`"pass"`/`"fail"`/`"unknown"`), `reason` (only when
+unknown), and a `left`/`right` `OperandEvidence` pair — the dashboard reuses its existing
+`describeRule()`/`describeOperand()` for the rule text rather than this service formatting it twice.
+
+**`OperandEvidence` — where each side's value actually came from.** Not just the answer: the page
+renders a per-rule drawer showing the derivation, so "why does it think RED" is answerable without
+opening a Redis CLI.
+
+| Field | Meaning |
+|---|---|
+| `display` | The formatted value, e.g. `"24,480.34 (Down→RED)"` — `null` if unresolved |
+| `numeric` | Set only when the side genuinely compares as a number. Drives the dashboard's distance-to-flipping readout, so `null` means *don't draw a gap*, never *assume zero* |
+| `kind` | `"indicator"` \| `"literal"` \| `"expression"` \| `"unresolved"` |
+| `source` | The exact Redis key read. `null` for literals (they're part of the rule, not live data). **Set even when unresolved** — "we looked here and it wasn't seeded" is a more useful answer than "no idea" |
+| `asOf` | The bar window (`LastBarWindowsStartTime`) for per-bar indicators, or `SessionDate` for Pivot Central Range, which is computed once a session rather than per bar |
+| `fields` | The raw hash entries the value was derived from, **verbatim and unrounded** — the drawer's whole purpose is showing what's really in Redis, so reformatting here would defeat it |
+
+The one synthetic entry in `fields` is Supertrend's `band used`: which of `PrevUpperBand`/
+`PrevLowerBand` *is* the Supertrend line depends entirely on `TrendDirection`, and that choice is
+invisible in the raw hash. Everything else is copied straight out.
+
+Rules in the never-evaluated branches (Risk Management, Exit/Stop-Loss) deliberately resolve
+**nothing at all** — not even the operands that would resolve fine. Reading Redis for the half of
+each rule that *is* backed would fill a drawer with real-looking evidence for a rule that was never
+evaluated; empty evidence is the honest shape, and the dashboard renders those rules in their
+original compact one-line form.
 
 ```bash
 curl http://localhost:8096/api/strategies/second-income/rule-status

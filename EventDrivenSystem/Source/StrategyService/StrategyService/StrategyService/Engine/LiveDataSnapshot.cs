@@ -45,7 +45,7 @@ namespace StrategyService.Engine
         // "unresolved", not as two different cases, since neither has a live value to compare.
         public async Task<Dictionary<string, string>?> GetIndicatorHashAsync(string instrument, string timeframe, string reference, int period, int multiplier)
         {
-            string key = $"Indicator:Running:{instrument}:{timeframe}:{reference}:{period}:{multiplier}";
+            string key = IndicatorKey(instrument, timeframe, reference, period, multiplier);
             if (_hashCache.TryGetValue(key, out var cached)) return cached;
 
             var hash = await _redis.GetHashAsync(key);
@@ -54,6 +54,13 @@ namespace StrategyService.Engine
             return result;
         }
 
+        // The one place this key shape is spelled out. Exposed (rather than kept inline above)
+        // because the Rule Engine page's evidence drawer cites the exact key each value was read
+        // from — a caller naming that key by re-building the string itself is exactly how the
+        // citation would silently start pointing at the wrong place.
+        public static string IndicatorKey(string instrument, string timeframe, string reference, int period, int multiplier) =>
+            $"Indicator:Running:{instrument}:{timeframe}:{reference}:{period}:{multiplier}";
+
         // Pivot Central Range has no Period/Multiplier variation (always 0/0) but its Timeframe is
         // whatever the strategy's rule says (e.g. "15 Minutes") — the "Closing Price (Previous)"
         // Expression that needs PriorClose doesn't carry that same timeframe on its own operand (its
@@ -61,7 +68,10 @@ namespace StrategyService.Engine
         // the instrument instead of requiring the caller to already know the exact timeframe key.
         // In practice there's only ever one PCR instance active per instrument at a time (WarmUpService
         // recomputes the same key fresh every Init) — see WARMUP_AND_INDICATOR_PLAN.md section 2e.
-        public async Task<decimal?> GetPriorCloseAsync(string instrument)
+        // Returns the key alongside the value, not just the value: this one is found by scanning
+        // rather than by building an exact key, so the caller genuinely cannot know which key
+        // answered without being told — and the evidence drawer cites it.
+        public async Task<(decimal Value, string SourceKey)?> GetPriorCloseAsync(string instrument)
         {
             foreach (var kv in _hashCache)
             {
@@ -69,13 +79,14 @@ namespace StrategyService.Engine
                     && kv.Key.Contains("Pivot Central Range", StringComparison.OrdinalIgnoreCase)
                     && kv.Value != null && kv.Value.TryGetValue("PriorClose", out var cachedClose)
                     && decimal.TryParse(cachedClose, out var cachedVal))
-                    return cachedVal;
+                    return (cachedVal, kv.Key);
             }
 
-            var hash = await _redis.ScanIndicatorHashAsync($"Indicator:Running:{instrument}:*:Pivot Central Range:0:0");
-            if (hash == null || !hash.TryGetValue("PriorClose", out var raw) || !decimal.TryParse(raw, out var val))
+            string pattern = $"Indicator:Running:{instrument}:*:Pivot Central Range:0:0";
+            var found = await _redis.ScanIndicatorHashWithKeyAsync(pattern);
+            if (found == null || !found.Value.Hash.TryGetValue("PriorClose", out var raw) || !decimal.TryParse(raw, out var val))
                 return null;
-            return val;
+            return (val, found.Value.Key);
         }
 
         // Mirrors DashboardService's GetField — ohlc-live/NotificationService's cached JSON blobs

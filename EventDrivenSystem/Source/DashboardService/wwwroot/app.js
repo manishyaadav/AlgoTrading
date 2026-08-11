@@ -1158,24 +1158,165 @@ function gateNodeHtml(gate, stageClass) {
     </div>`;
 }
 
-function ruleEvalRowHtml(ev) {
+/* Which rule rows have their evidence drawer open, keyed by the stable scope:sequence key built
+   in ruleGroupBodyHtml(). Kept outside the render so a 5s refresh that genuinely changes the
+   payload re-opens whatever the user had open, rather than collapsing it under them. */
+const ruleEngineOpenRows = new Set();
+let ruleEngineLastPayload = null;
+
+// One side of a comparison: what the rule asked for, and what that actually resolved to right now.
+// A Literal's resolved value is its own name, so it renders once rather than twice — repeating
+// "GREEN / GREEN" would read like two independent facts agreeing.
+function operandSideHtml(operand, evidence, align) {
+  const name = describeOperand(operand);
+  const isLiteral = evidence && evidence.kind === "literal";
+  const resolved = evidence && evidence.display;
+
+  const valueLine = isLiteral
+    ? `<div class="cmp-value literal">literal</div>`
+    : resolved
+      ? `<div class="cmp-value">${esc(resolved)}</div>`
+      : `<div class="cmp-value none">—</div>`;
+
+  return `
+    <div class="cmp-side ${align}">
+      <div class="cmp-name">${name}</div>
+      ${valueLine}
+    </div>`;
+}
+
+// Reads the ATR off whichever side carries it (only Supertrend does). ATR is the one real
+// volatility unit available here, so it's the only scale the gap bar is ever drawn against — with
+// no ATR there's no honest scale, and the bar is simply omitted rather than invented.
+function atrFrom(...evidences) {
+  for (const ev of evidences) {
+    for (const f of (ev && ev.fields) || []) {
+      if (f.key === "Atr") {
+        const n = Number(f.value);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+    }
+  }
+  return null;
+}
+
+// The distance-to-flipping readout. Only drawn when both sides genuinely resolved to numbers —
+// a text comparison (Supertrend == GREEN) has no meaningful "gap", and an unresolved side has no
+// number at all.
+function ruleGapHtml(ev) {
+  const l = ev.left && ev.left.numeric, r = ev.right && ev.right.numeric;
+  if (typeof l !== "number" || typeof r !== "number") return "";
+
+  const delta = Math.abs(l - r);
+  const fmt = delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const op = (ev.rule.operator || "").trim();
+  const equality = op === "==" || op === "!=";
+
+  let phrase;
+  if (ev.status === "pass") phrase = equality ? (delta === 0 ? "exactly equal" : `${fmt} apart`) : `passing by ${fmt}`;
+  else if (ev.status === "fail") phrase = equality ? `${fmt} apart` : `${fmt} away from passing`;
+  else phrase = `${fmt} apart`;
+
+  const atr = atrFrom(ev.left, ev.right);
+  let track = "";
+  if (atr) {
+    const multiples = delta / atr;
+    const pct = Math.min(multiples / 3, 1) * 100;
+    track = `
+      <div class="gap-track" title="Scale: 0 to 3× ATR (${atr.toLocaleString(undefined, { maximumFractionDigits: 2 })}), from the same Supertrend hash">
+        <div class="gap-fill ${ev.status}" style="width:${pct.toFixed(1)}%"></div>
+      </div>
+      <span class="gap-scale">${multiples.toFixed(2)}× ATR</span>`;
+  }
+
+  return `<div class="rule-gap"><span class="gap-delta ${ev.status}">Δ ${fmt}</span><span class="gap-phrase">${esc(phrase)}</span>${track}</div>`;
+}
+
+// Provenance for one side. Deliberately distinguishes "this is part of the rule, not live data"
+// (a literal) from "we looked here and found nothing" (unresolved with a source) from "there is
+// nowhere to look yet" (unresolved without one) — those are three different answers to "why".
+function evidenceSideHtml(label, operand, evidence) {
+  if (!evidence) return "";
+
+  const rows = (evidence.fields || []).map(f =>
+    `<div class="ev-field"><span class="ev-k">${esc(f.key)}</span><span class="ev-v">${esc(f.value)}</span></div>`
+  ).join("");
+
+  let source;
+  if (evidence.kind === "literal") source = `<div class="ev-source lit">from the rule definition — not live data</div>`;
+  else if (evidence.source) {
+    const prefix = evidence.kind === "unresolved" ? "looked in" : "redis";
+    source = `<div class="ev-source"><span class="ev-k">${prefix}</span><code>${esc(evidence.source)}</code></div>`;
+  } else source = `<div class="ev-source none">no source in this stack yet</div>`;
+
+  return `
+    <div class="ev-col">
+      <div class="ev-head">${esc(label)} · ${describeOperand(operand)}</div>
+      ${source}
+      ${evidence.asOf ? `<div class="ev-asof">as of ${esc(evidence.asOf)}</div>` : ""}
+      ${rows ? `<div class="ev-fields">${rows}</div>` : ""}
+    </div>`;
+}
+
+// No drawer at all when neither side has anything to show — the never-evaluated Exit/Risk rules
+// keep exactly the shape they had before, rather than gaining an affordance that opens onto
+// nothing.
+function hasEvidence(ev) {
+  const any = e => e && (e.kind !== "unresolved" || e.source || (e.fields || []).length);
+  return !!(any(ev.left) || any(ev.right));
+}
+
+function ruleEvalRowHtml(ev, key) {
   const tag = ev.status === "unknown" && ev.reason
     ? `<span class="unwired-tag" title="${esc(ev.reason)}">${esc(ev.reason.length > 34 ? ev.reason.slice(0, 34) + "…" : ev.reason)}</span>`
     : `<span class="badge status-${ev.status}">${RULE_STATUS_LABELS[ev.status] || ev.status}</span>`;
 
+  // A rule with nothing behind either side (the never-evaluated Risk Management and Exit branches)
+  // keeps the compact one-line form it always had. Giving it the resolved-value anatomy would mean
+  // a "—" under every operand — three lines of blank where there used to be one line of rule, and
+  // a static preview column taller than the live one beside it. The new layout is for rules that
+  // have something to show; these have exactly as much to say as they did before.
+  if (!hasEvidence(ev)) {
+    return `
+      <div class="eval-row ${ev.status} compact" data-rule-key="${esc(key)}">
+        <div class="eval-main">
+          <span class="rule-text">${describeRule(ev.rule)}</span>
+          ${tag}
+        </div>
+      </div>`;
+  }
+
+  const open = ruleEngineOpenRows.has(key);
+  const drawer = `<button class="evidence-toggle" data-rule-key="${esc(key)}" aria-expanded="${open}" title="Where these values came from">▾</button>`;
+
   return `
-    <div class="rule-row">
-      <span class="rule-text">${describeRule(ev.rule)}</span>
-      ${tag}
+    <div class="eval-row ${ev.status}" data-rule-key="${esc(key)}">
+      <div class="eval-main">
+        <div class="rule-compare">
+          ${operandSideHtml(ev.rule.leftOperand, ev.left, "left")}
+          <div class="cmp-op ${ev.status}">${esc(ev.rule.operator || "")}</div>
+          ${operandSideHtml(ev.rule.rightOperand, ev.right, "right")}
+        </div>
+        <div class="eval-end">
+          ${ev.rule.link ? `<span class="rule-link-tag">${esc(ev.rule.link)}</span>` : ""}
+          ${tag}
+          ${drawer}
+        </div>
+      </div>
+      ${ruleGapHtml(ev)}
+      <div class="evidence" ${open ? "" : "hidden"}>
+        ${evidenceSideHtml("Left", ev.rule.leftOperand, ev.left)}
+        ${evidenceSideHtml("Right", ev.rule.rightOperand, ev.right)}
+      </div>
     </div>`;
 }
 
-function ruleGroupBodyHtml(group) {
+function ruleGroupBodyHtml(group, scope) {
   if (!group.rules.length) return `<div class="hint" style="margin-top:8px">No rules defined.</div>`;
-  return `<div class="rule-list">${group.rules.map(ruleEvalRowHtml).join("")}</div>`;
+  return `<div class="rule-list">${group.rules.map((ev, i) => ruleEvalRowHtml(ev, `${scope}:${ev.rule.sequence ?? i}`)).join("")}</div>`;
 }
 
-function entryExitColumnHtml(label, labelClass, entryExit) {
+function entryExitColumnHtml(label, labelClass, entryExit, side) {
   return `
     <div class="fork-col">
       <div class="fork-label ${labelClass}">${esc(label)}</div>
@@ -1184,14 +1325,14 @@ function entryExitColumnHtml(label, labelClass, entryExit) {
           <div class="node-title">${esc(entryExit.entryRules.title)}</div>
           <span class="badge status-${entryExit.entryRules.status}">${RULE_STATUS_LABELS[entryExit.entryRules.status] || entryExit.entryRules.status}</span>
         </div>
-        ${ruleGroupBodyHtml(entryExit.entryRules)}
+        ${ruleGroupBodyHtml(entryExit.entryRules, `${side}:entry`)}
         <div class="node-eyebrow" style="margin-top:14px">${esc(entryExit.riskManagementRules.title)}</div>
-        ${ruleGroupBodyHtml(entryExit.riskManagementRules)}
+        ${ruleGroupBodyHtml(entryExit.riskManagementRules, `${side}:risk`)}
       </div>
     </div>`;
 }
 
-function exitColumnHtml(entryExit) {
+function exitColumnHtml(entryExit, side) {
   return `
     <div class="fork-col">
       <div class="fork-label dim">○ In position — static preview</div>
@@ -1200,19 +1341,19 @@ function exitColumnHtml(entryExit) {
           <div class="node-title">${esc(entryExit.exitBranch.title)}</div>
           <span class="badge unknown">Not evaluated</span>
         </div>
-        ${ruleGroupBodyHtml(entryExit.exitBranch)}
+        ${ruleGroupBodyHtml(entryExit.exitBranch, `${side}:exit`)}
         <div class="node-detail" style="margin-top:10px">Same rule tree, drawn for reference — never actually evaluates until the position gate above has something real to check.</div>
       </div>
     </div>`;
 }
 
 function ruleEngineFlowHtml(data) {
-  const sideBlock = (label, entryExit) => `
+  const sideBlock = (label, entryExit, side) => `
     <div class="rule-side">
       <div class="rule-side-label">${esc(label)}</div>
       <div class="fork">
-        ${entryExitColumnHtml("● Not in position — live", "live", entryExit)}
-        ${exitColumnHtml(entryExit)}
+        ${entryExitColumnHtml("● Not in position — live", "live", entryExit, side)}
+        ${exitColumnHtml(entryExit, side)}
       </div>
     </div>`;
 
@@ -1238,23 +1379,41 @@ function ruleEngineFlowHtml(data) {
           </div>
           <span class="badge status-${data.tradingSessionRules.status}">${RULE_STATUS_LABELS[data.tradingSessionRules.status] || data.tradingSessionRules.status}</span>
         </div>
-        ${ruleGroupBodyHtml(data.tradingSessionRules)}
+        ${ruleGroupBodyHtml(data.tradingSessionRules, "session")}
       </div>
       <div class="connector ${data.tradingSessionRules.status}"></div>
       ${gateNodeHtml(data.positionGate, "placeholder-node")}
       <div class="connector"></div>
     </div>
 
-    ${sideBlock("Long", data.long)}
-    ${sideBlock("Short", data.short)}
+    ${sideBlock("Long", data.long, "long")}
+    ${sideBlock("Short", data.short, "short")}
 
     <div class="legend">
       <span><span class="dot pass"></span>Pass — a real live value satisfied the condition</span>
       <span><span class="dot fail"></span>Fail — a real live value did not satisfy it</span>
       <span><span class="dot unknown"></span>Unknown — no data source exists for this yet</span>
+      <span><span class="dot neutral"></span>▾ opens the exact Redis key and raw fields the value came from</span>
     </div>
   `;
 }
+
+// Evidence drawers are toggled by delegation off the page container, so the handler survives the
+// re-render — binding per button would leave dead listeners on every refresh that replaces them.
+document.getElementById("rule-engine-content").addEventListener("click", ev => {
+  const btn = ev.target.closest(".evidence-toggle");
+  if (!btn) return;
+
+  const key = btn.dataset.ruleKey;
+  const row = btn.closest(".eval-row");
+  const drawer = row && row.querySelector(".evidence");
+  if (!drawer) return;
+
+  const open = drawer.hidden;
+  drawer.hidden = !open;
+  btn.setAttribute("aria-expanded", String(open));
+  if (open) ruleEngineOpenRows.add(key); else ruleEngineOpenRows.delete(key);
+});
 
 async function loadRuleEngine() {
   const el = document.getElementById("rule-engine-content");
@@ -1265,12 +1424,24 @@ async function loadRuleEngine() {
 
     if (!deployed) {
       el.innerHTML = `<div class="hint">No deployed strategy yet — deploy one from the Strategy page first.</div>`;
+      ruleEngineLastPayload = null;
       errEl.hidden = true;
       return;
     }
 
     const status = await fetchJson(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(deployed.id)}/rule-status`);
-    el.innerHTML = ruleEngineFlowHtml(status);
+
+    // The 5s refresh used to blow away and rebuild this whole subtree every tick, which made any
+    // interaction on the page impossible to sustain — an open drawer, a text selection, even a
+    // hover would survive at most five seconds. Indicators only actually change on a bar close
+    // (5 minutes for this strategy), so the overwhelming majority of ticks are identical payloads
+    // and now touch the DOM not at all. When something genuinely did change, the rebuild reopens
+    // whatever drawers were open via ruleEngineOpenRows.
+    const payload = JSON.stringify(status);
+    if (payload !== ruleEngineLastPayload) {
+      ruleEngineLastPayload = payload;
+      el.innerHTML = ruleEngineFlowHtml(status);
+    }
     errEl.hidden = true;
   } catch (err) {
     errEl.hidden = false;

@@ -1347,15 +1347,133 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .value-chip .v.fail { color: var(--red); }
 
 .rule-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.rule-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+
+/* Named .eval-row, NOT .rule-row: the Strategy page's rule *editor* already owns .rule-row (see
+   ~line 846), and this page's flat later-in-the-file redefinition was silently overriding it on
+   both pages. Two different components, two different names. */
+.eval-row {
   padding: 8px 12px;
   background: var(--panel-2);
   border-radius: 8px;
   font-size: 12.5px;
 }
-.rule-row .rule-text { font-size: 12px; }
+.eval-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* The never-evaluated branches keep the original one-line row — see ruleEvalRowHtml(). */
+.eval-row.compact .rule-text { font-size: 12px; }
+.eval-end { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .unwired-tag { font-size: 10px; color: var(--muted); font-style: italic; white-space: nowrap; }
+
+/* The comparison itself: operand / operator / operand, with each side's live value directly under
+   the name it resolved from. Same 1fr auto 1fr shape the Strategy page's rule editor uses for the
+   same three parts, so a rule reads the same way whether you're writing it or watching it. */
+.rule-compare { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; flex: 1; min-width: 0; }
+.cmp-side { min-width: 0; }
+.cmp-side.right { text-align: right; }
+.cmp-name { font-size: 12px; color: var(--text); line-height: 1.35; }
+.cmp-value {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px; margin-top: 3px; color: var(--text);
+}
+/* A literal isn't a live reading — it says so in the muted voice the page uses for "nothing to
+   report here", so it can never be mistaken for a value that was fetched. */
+.cmp-value.literal, .cmp-value.none { font-family: inherit; font-size: 10.5px; font-style: italic; color: var(--muted); }
+
+/* The operator carries the outcome tint, not the operand values: in "A > B" neither side is
+   individually right or wrong, the comparison between them is. */
+.cmp-op {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; padding: 3px 8px; border-radius: 6px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.cmp-op.pass { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); background: var(--green-bg); }
+.cmp-op.fail { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); background: var(--red-bg); }
+
+.evidence-toggle {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 6px; cursor: pointer; font-size: 10px; line-height: 1;
+  padding: 4px 6px; transition: transform var(--motion-fast), color var(--motion-fast);
+}
+.evidence-toggle:hover { color: var(--text); border-color: var(--line); }
+.evidence-toggle[aria-expanded="true"] { transform: rotate(180deg); color: var(--text); }
+
+/* Distance to flipping. Only rendered when both sides resolved to real numbers — see
+   ruleGapHtml(). The track is scaled to ATR and *says so*; with no ATR available there's no
+   honest scale for a bar, so only the numbers show. */
+.rule-gap { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 11px; }
+.gap-delta {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; font-weight: 500;
+}
+.gap-delta.pass { color: var(--green); }
+.gap-delta.fail { color: var(--red); }
+.gap-delta.unknown { color: var(--muted); }
+.gap-phrase { color: var(--muted); }
+.gap-track { flex: 1; max-width: 160px; height: 3px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.gap-fill { height: 100%; background: var(--muted); border-radius: 2px; }
+.gap-fill.pass { background: var(--green); }
+.gap-fill.fail { background: var(--red); }
+.gap-scale {
+  color: var(--muted); font-size: 10.5px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Evidence drawer — the exact Redis key, the bar it belongs to, and the raw hash fields the value
+   came out of. Everything here is verbatim from Redis except Supertrend's "band used", which is
+   the one derivation the raw hash can't show on its own. */
+.evidence {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+/* Explicit, because `display: grid` above beats the UA stylesheet's `[hidden] { display: none }`
+   on specificity — without this the drawer renders open regardless of the attribute. */
+.evidence[hidden] { display: none; }
+.ev-col { min-width: 0; }
+.ev-head {
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px;
+}
+.ev-source { font-size: 10.5px; color: var(--muted); word-break: break-all; }
+.ev-source .ev-k { margin-right: 6px; }
+.ev-source code {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px; color: var(--text);
+}
+.ev-source.lit, .ev-source.none { font-style: italic; }
+.ev-asof {
+  font-size: 10.5px; color: var(--muted); margin-top: 3px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.ev-fields { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.ev-field { display: flex; justify-content: space-between; gap: 10px; font-size: 10.5px; }
+.ev-k { color: var(--muted); white-space: nowrap; }
+.ev-v {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; color: var(--text);
+  text-align: right; word-break: break-all;
+}
+
+/* Container query, not a viewport one: the same .eval-row renders both full-width (Gate 3, ~900px)
+   and inside a fork column (~420px), so what it needs to know is how much room *it* has, not how
+   wide the window is. A media query would stack the roomy top-level rows and the cramped fork
+   rows at the same breakpoint, which is wrong for both. */
+.rule-node { container-type: inline-size; }
+
+@container (max-width: 460px) {
+  .rule-compare { grid-template-columns: 1fr; gap: 4px; }
+  .cmp-side.right { text-align: left; }
+  .cmp-op { justify-self: start; }
+  .evidence { grid-template-columns: 1fr; }
+}
+
+/* Fallback for the fork collapsing to one column on a genuinely narrow window. */
+@media (max-width: 700px) {
+  .rule-compare { grid-template-columns: 1fr; }
+  .cmp-side.right { text-align: left; }
+  .evidence { grid-template-columns: 1fr; }
+}
 
 .rule-side { margin-top: 28px; }
 .rule-side-label {
@@ -1385,6 +1503,7 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .legend .dot.pass { background: var(--green); }
 .legend .dot.fail { background: var(--red); }
 .legend .dot.unknown { background: var(--muted); }
+.legend .dot.neutral { background: var(--line); }
 
 @media (max-width: 760px) {
   .fork { grid-template-columns: 1fr; }
