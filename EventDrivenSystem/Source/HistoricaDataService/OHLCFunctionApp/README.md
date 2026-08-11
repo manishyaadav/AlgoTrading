@@ -1,6 +1,8 @@
 # OHLC Function App
 
-Read-only HTTP API backed by blob storage (`azurite-live`). Serves historical OHLC data — this is a **query API only**, it isn't wired into the live Kafka pipeline (that's `dataingestion` → Kafka → `aggregation-live`).
+Blob storage (`azurite-live`) backend for historical OHLC data — an HTTP query API (below), plus one
+Kafka consumer that keeps Azurite in sync with the live 1-min feed instead of relying on a manual
+after-hours upload (see **Kafka consumers**, further down).
 
 ## HTTP routes
 
@@ -47,6 +49,44 @@ tells you how fresh things are, not how much history exists — that's `Historic
 curl "http://localhost:8092/api/DataAvailableTill"
 ```
 
+
+## Kafka consumers
+
+**`LiveCandlePersistenceFunction`** — consumes `live-dataingestion-ohlc-topic` (own consumer group
+`live-ohlc-azurite-persistence-consumer`, so it doesn't interfere with the 5-min aggregator or
+`NotificationService`, which already read the same topic) and appends every 1-min candle to
+Azurite, in the exact same shape the HTTP routes above read: header
+`Date,Open,Low,High,Close,Volume`, date as `dd-MM-yyyy HH:mm:ss`, path
+`{basePath}/{year}/{month}/{blobName}.csv` (see `BlobPathHelper.cs`) — always the candle's own
+month/contract, resolved the same way `GetOHLCByYearAndMonth` resolves it.
+
+The live feed's ticker (`"NIFTY"`, `"BANKNIFTY"` — see `NotificationService`'s
+`DataIngestion:TradingView:*` Redis keys) carries no exchange/instrument-type marker; it represents
+**both** the NSE spot index and the NFO front-month future, so every candle is written to **both**
+blob paths, not just one.
+
+Being a brand-new consumer group, its first run reads from Kafka's earliest retained offset for
+this topic — not just new candles going forward — so it backfills Azurite with however much
+history the topic still has retained, then settles into real-time as it catches up. Confirmed live:
+processed a multi-day backlog and landed exactly on today's most recent candle within about 30
+seconds.
+
+### Write strategy — configurable, not hardcoded
+
+Azurite blobs are **Block Blobs** (not Append Blobs — checked directly against real blob metadata
+from this environment), so "append a row" has two honest options, chosen via the
+`BLOB_APPEND_STRATEGY` env var:
+
+| Value | Strategy | When |
+|---|---|---|
+| `Simple` (default) | Download the whole existing file, append the row, re-upload. | Local/Azurite — files are small (~650KB/month at current volume) and this is all localhost, so the redundant transfer costs nothing in practice. **This is the strategy actually exercised end-to-end.** |
+| `BlockList` | Stage the new row as its own block, commit an updated block list — never re-transfers existing content. | Meant for real Azure, where re-uploading a growing file on every 1-min candle would be a genuine, recurring cost. **⚠️ Not independently verified against real Azure from this environment** — only Azurite is available here, and it may not enforce every real-Azure constraint (e.g. same-length block IDs within one commit) with full strictness. Test carefully against a real storage account before switching this on in production. |
+
+Both strategies are **ETag-conditional with retry**: read-or-check the blob's current ETag, write
+conditionally (`IfMatch`/`IfNoneMatch`), and on a 412 conflict (another candle landed on the same
+blob in between), retry from a fresh read. Without this, two candles racing on the same blob could
+silently lose a row — one write's read-modify-write cycle overwriting the other's.
+=======
 **`GET|POST /api/HistoricalSufficiency`** — "does Azurite have enough history for this instrument?"
 (`WARMUP_AND_INDICATOR_PLAN.md` section 2d). Existence-only, checked against the monthly rollup
 blob (see above) — confirms the month's file exists, not that the specific required day's data is
@@ -105,5 +145,7 @@ Note: this Dockerfile uses a single-stage `dotnet publish` (no separate SDK/runt
 | `AzureWebJobsStorage` | points at `azurite-live` |
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` |
 | `ASPNETCORE_ENVIRONMENT` | `docker` |
+| `KAFKA_BROKER_URL` | `kafka-live:29092` — needed by `LiveCandlePersistenceFunction` |
+| `BLOB_APPEND_STRATEGY` | `Simple` or `BlockList` — see **Kafka consumers** above |
 
-Data must already exist in the `azurite-live` blob container for these routes to return anything — this service only reads it.
+The HTTP routes are read-only against whatever's already in `azurite-live`. `LiveCandlePersistenceFunction` is the write path — it's what keeps that data current now, instead of a manual after-hours upload.
