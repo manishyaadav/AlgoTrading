@@ -229,18 +229,26 @@ app.MapGet("/api/data-ingestion", async () =>
 {
     try
     {
-        var results = new List<CandleCountStatus>();
         // Provider isn't hardcoded — "DataIngestion:{Provider}:{Ticker}" keys are scanned and both
         // segments are pulled out, so a future provider (Zerodha, Kite, NSE direct, ...) shows up
         // automatically the moment it starts writing to Redis, no code change needed here.
-        foreach (var (provider, ticker) in await DiscoverProviderTickers(redisLazy.Value, "DataIngestion:*", providerSegmentIndex: 1, tickerSegmentIndex: 2))
-        {
-            results.Add(await BuildCandleCountStatus(
-                redisLazy.Value, ohlcHttpClient, ticker, timeframeMinutes: 1,
-                countKeyPrefix: $"Ingestion:Count:{provider}",
-                snapshotKeyBuilder: t => $"DataIngestion:{provider}:{t}",
-                provider: provider));
-        }
+        //
+        // Built as a list of tasks and awaited together (Task.WhenAll), not one-at-a-time in the
+        // loop — each card's BuildCandleCountStatus makes its own HTTP round-trip to ohlc-live
+        // (CheckAzurite), and as the trading day's monthly CSV blobs grow, that round-trip gets
+        // slower. Sequential awaits meant N tickers cost N times one call's latency; running them
+        // concurrently caps the whole endpoint at roughly one call's latency regardless of N. This
+        // is what was silently hanging both this page and home.html's landing-page poll (which has
+        // no client-side fetch timeout) once the day's data grew large enough — found live, not
+        // theoretically: /api/aggregation was timing out past 15s before this fix.
+        var tickers = await DiscoverProviderTickers(redisLazy.Value, "DataIngestion:*", providerSegmentIndex: 1, tickerSegmentIndex: 2);
+        var tasks = tickers.Select(t => BuildCandleCountStatus(
+            redisLazy.Value, ohlcHttpClient, t.Ticker, timeframeMinutes: 1,
+            countKeyPrefix: $"Ingestion:Count:{t.Provider}",
+            snapshotKeyBuilder: tk => $"DataIngestion:{t.Provider}:{tk}",
+            provider: t.Provider));
+
+        var results = await Task.WhenAll(tasks);
         return Results.Ok(results.OrderBy(r => r.Contract));
     }
     catch (Exception ex)
@@ -257,19 +265,20 @@ app.MapGet("/api/aggregation", async () =>
         // comes back generically (timeframe badge, rail, expected-total math all derive
         // from item.timeframe per card) — this array was the only thing scoping it to 5-min.
         int[] timeframes = { 5, 10, 15, 30, 60, 75 };
-        var results = new List<CandleCountStatus>();
 
-        foreach (var tf in timeframes)
+        // Same concurrency fix as /api/data-ingestion above, more pronounced here — 2 tickers ×
+        // 6 timeframes means 12 sequential CheckAzurite round-trips in the old code, so this
+        // endpoint was the one actually observed timing out (>15s) once the day's CSV blobs grew.
+        var perTimeframe = await Task.WhenAll(timeframes.Select(async tf =>
         {
-            foreach (var ticker in await DiscoverTickers(redisLazy.Value, $"Aggregation:OHLC:*:{tf}:Min", 2))
-            {
-                results.Add(await BuildCandleCountStatus(
-                    redisLazy.Value, ohlcHttpClient, ticker, timeframeMinutes: tf,
-                    countKeyPrefix: "Aggregation:Count",
-                    snapshotKeyBuilder: t => $"Aggregation:OHLC:{t}:{tf}:Min"));
-            }
-        }
+            var tickers = await DiscoverTickers(redisLazy.Value, $"Aggregation:OHLC:*:{tf}:Min", 2);
+            return await Task.WhenAll(tickers.Select(ticker => BuildCandleCountStatus(
+                redisLazy.Value, ohlcHttpClient, ticker, timeframeMinutes: tf,
+                countKeyPrefix: "Aggregation:Count",
+                snapshotKeyBuilder: t => $"Aggregation:OHLC:{t}:{tf}:Min")));
+        }));
 
+        var results = perTimeframe.SelectMany(r => r);
         return Results.Ok(results.OrderBy(r => r.Timeframe).ThenBy(r => r.Contract));
     }
     catch (Exception ex)
@@ -536,20 +545,38 @@ static async Task<bool> CheckAzurite(HttpClient ohlcClient, string ticker, strin
 {
     try
     {
-        // ohlc-live resolves instrumentName to a blob purely by whether it contains "bank"+"nifty" —
-        // passing the ticker straight through works for both, see OHLCFunctionApp/GetOHLCDataByDate.cs.
-        var res = await ohlcClient.GetAsync($"/api/GetOHLCDataByDate?date={date}&exchange=nse&instrumentName={Uri.EscapeDataString(ticker)}");
+        if (!DateTime.TryParse(date, out var targetDate)) return false;
+
+        // Deliberately GetOHLCByYearAndMonth, not GetOHLCDataByDate — found live that
+        // GetOHLCDataByDate genuinely hangs for BANKNIFTY specifically (reproduced repeatedly,
+        // 8-10s with no response at all; NIFTY on the same call is fine), while
+        // GetOHLCByYearAndMonth reading the identical underlying blob is consistently fast
+        // (tens of ms) for both tickers. Root cause not fully chased down — plausibly a
+        // read/write race with LiveCandlePersistenceFunction's frequent writes to the same blob,
+        // something Azurite may not handle as gracefully as real Azure Storage — but nothing else
+        // in this codebase calls GetOHLCDataByDate programmatically, so routing around it here is
+        // the safe fix rather than debugging Azurite's concurrency behavior under time pressure.
+        // ohlc-live resolves instrumentName to a blob purely by whether it contains "bank"+"nifty"
+        // — passing the ticker straight through works for both, see BlobPathHelper.GetBlobName.
+        var res = await ohlcClient.GetAsync($"/api/GetOHLCByYearAndMonth?year={targetDate.Year}&month={targetDate.Month}&exchange=nse&instrumentName={Uri.EscapeDataString(ticker)}");
         if (!res.IsSuccessStatusCode) return false;
 
         var body = await res.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
-        // ohlc-live's anonymous response object is written PascalCase ("TotalRecords") but ASP.NET
-        // Core's default serializer emits it camelCase on the wire ("totalRecords") —
-        // TryGetProperty is case-sensitive, so a direct PascalCase lookup here always missed and
-        // this permanently returned false. Match case-insensitively, same as GetField does above
-        // for the holiday/session responses.
-        return GetField(doc.RootElement, "TotalRecords") is string totalStr
-            && int.TryParse(totalStr, out int total) && total > 0;
+        if (!doc.RootElement.TryGetProperty("recods", out var records) || records.ValueKind != JsonValueKind.Array)
+            return false;
+
+        // GetOHLCByYearAndMonth returns the whole month, unfiltered — check client-side whether
+        // any row actually belongs to the target date, same "did today's data land" semantics
+        // CheckAzurite always had, just sourced from a route that doesn't hang.
+        foreach (var record in records.EnumerateArray())
+        {
+            if (GetField(record, "Date") is string dateStr
+                && DateTime.TryParse(dateStr, out var recordDate)
+                && recordDate.Date == targetDate.Date)
+                return true;
+        }
+        return false;
     }
     catch
     {

@@ -44,6 +44,19 @@ those rows get recovered instead of just skipped.
 curl "http://localhost:8092/api/GetOHLCDataByDate?date=2026-08-03&exchange=nse&instrumentName=nifty-50"
 ```
 
+> ⚠️ **Known issue, not yet root-caused**: this route has been observed to hang indefinitely
+> (8-10s+, no response at all) for `BANKNIFTY` specifically, reliably reproduced, while
+> `GetOHLCByYearAndMonth` reading the exact same underlying blob is consistently fast (tens of
+> ms). `NIFTY` doesn't reproduce it. Plausibly a read/write race with
+> `LiveCandlePersistenceFunction`'s frequent writes to the same blob — something Azurite may not
+> handle as gracefully under concurrency as real Azure Storage — but not confirmed. `DashboardService`'s
+> `CheckAzurite` used to call this route and was the visible symptom (a 15s+ hang on `/api/aggregation`
+> that froze the whole dashboard/console landing page); it now calls `GetOHLCByYearAndMonth`
+> instead and filters client-side, which sidesteps the bug rather than fixing it. Nothing else in
+> this codebase calls this route programmatically today, but it's still broken for direct callers
+> (e.g. the curl example above, for BANKNIFTY) until this gets properly diagnosed against real
+> Azure Storage or a newer Azurite version.
+
 > **Blob layout has two tiers, and both routes above correctly use the permanent one.** For the
 > current month, day-level folders (`{year}/{month}/{day}/{blobName}.csv`) hold that day's data —
 > but they're transient, purged once the month completes. The same-named file directly under the

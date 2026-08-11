@@ -1,4 +1,22 @@
 const REFRESH_MS = 5000;
+const FETCH_TIMEOUT_MS = 8000;
+
+// Bounded with an explicit timeout — plain fetch() has none, so a single slow endpoint (found
+// live: /api/aggregation took 15s+ once the day's Azurite CSV blobs grew large enough) could hang
+// a card's load indefinitely. Fixed at the source too (the endpoints now run their per-ticker
+// checks concurrently instead of one-at-a-time), but this stays as a second line of defense —
+// same fix, same reasoning, as home.js's getJson().
+async function fetchJson(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // Strategy API base — must be declared before the initial showPage() call
 // below (landing directly on #strategy runs loadStrategyGrid() synchronously
@@ -740,9 +758,7 @@ function candleStatusCardHtml(item) {
 async function loadCandleStatus(endpoint, elementId, emptyText) {
   const el = document.getElementById(elementId);
   try {
-    const res = await fetch(endpoint);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = await res.json();
+    const items = await fetchJson(endpoint);
 
     el.innerHTML = items.length
       ? items.map(candleStatusCardHtml).join("")
@@ -828,9 +844,7 @@ function indicatorCardHtml(item) {
 async function loadIndicatorsStatus() {
   const el = document.getElementById("indicators-status");
   try {
-    const res = await fetch("/api/indicators");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = await res.json();
+    const items = await fetchJson("/api/indicators");
 
     el.innerHTML = items.length
       ? items.map(indicatorCardHtml).join("")
