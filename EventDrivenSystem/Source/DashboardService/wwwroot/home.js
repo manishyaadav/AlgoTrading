@@ -6,6 +6,7 @@
    ========================================================================== */
 
 const POLL_MS = 5000;
+const FETCH_TIMEOUT_MS = 8000;
 const STRATEGY_API_BASE = `${location.protocol}//${location.hostname}:8096`;
 
 const SESSION_OPEN_MIN = 9 * 60 + 15;   // 09:15 IST
@@ -120,10 +121,23 @@ function tickClock() {
 
 /* ── Polling ─────────────────────────────────────────────────────────────── */
 
+// Bounded with an explicit timeout — plain fetch() has none, so a single slow endpoint (found
+// live: /api/aggregation took 15s+ once the day's Azurite CSV blobs grew large enough) hung the
+// whole Promise.all in poll() forever, since nothing else in this file was ever going to time it
+// out. Fixed at the source too (the endpoints themselves now run their per-ticker checks
+// concurrently instead of one-at-a-time), but this stays as a second line of defense — the page
+// should always eventually render *something* rather than freeze indefinitely on "Connecting to
+// the stack" if some other endpoint ever gets slow again.
 async function getJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Resolves to the parsed body, or null if that endpoint is unreachable. */

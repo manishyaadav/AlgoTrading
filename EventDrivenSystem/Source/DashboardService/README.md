@@ -44,9 +44,23 @@ For each contract/timeframe, a card shows:
   This went through two earlier versions, both replaced for the same underlying reason. A ratio (`count / expectedSoFar >= 0.9`) made low-bucket-count timeframes wildly over-sensitive — 75-min only has 5 buckets in a session, so the same one-bucket lag that's invisible on 1-min (375 buckets) used to swing 75-min straight to amber. Fixing that to an absolute bucket gap (`expectedSoFar - count`) helped, but both share a deeper flaw: neither can recover from a *permanent* historical gap. If the pipeline was down for a stretch and missed 40 buckets, cumulative count stays 40 short of expected for the rest of the day — even hours after the pipeline is fully healthy again, the badge stayed red regardless. Freshness of the latest arrival has no memory of history: a bar that landed 90 seconds ago means caught up *right now*, whatever happened three hours earlier. The cumulative shortfall is still shown as informational text (`N short`) — that's accurate and worth keeping, it just no longer drives the color.
 
   Three fixed colors, never a status- or session-driven palette: arrived bars are **always** green, missing buckets are **always** red, not-due-yet is **always** dim — a bucket's own state doesn't change because the aggregate status badge or the session mood changed. See [design-system/algotrading-dashboard/pages/data.md](../../../design-system/algotrading-dashboard/pages/data.md#three-fixed-colors-never-a-status--or-phase-driven-palette).
-- Two storage indicators — **Redis** (green if the count SET has any members) and **Azurite** (green only if `ohlc-live` actually has a blob for today's date for that contract). During live market hours this is **expected to show red** — the Azurite blob upload is a manual, after-hours process today (see the root README's data-preparation discussion), not a bug in this indicator.
+- Two storage indicators — **Redis** (green if the count SET has any members) and **Azurite** (green if `ohlc-live` actually has a blob row for today's date for that contract). Used to be expected-red during live hours (the Azurite upload was a manual after-hours process) — that's no longer true since `ohlc-live`'s `LiveCandlePersistenceFunction` started writing every live candle straight through, so this should read green live now too. `CheckAzurite` (`Program.cs`) calls `GetOHLCByYearAndMonth`, not `GetOHLCDataByDate` — see below, the latter has a known hang for `BANKNIFTY`.
 
-**Aggregation is grouped into two sub-sections**: **Timeframes** (the card grid above, one card per contract × configured timeframe — `int[] timeframes` in `Program.cs`'s `/api/aggregation` handler) and **Indicators** (a placeholder — nothing computes Supertrend/EMA/Pivot Central Range yet, this is just marking where that will eventually surface).
+**Aggregation is grouped into two sub-sections**: **Timeframes** (the card grid above, one card per contract × configured timeframe — `int[] timeframes` in `Program.cs`'s `/api/aggregation` handler) and **Indicators** — real now (EMA/Supertrend/Pivot Central Range), see `GET /api/indicators` and [WARMUP_AND_INDICATOR_PLAN.md](../../../WARMUP_AND_INDICATOR_PLAN.md) section 2e. Discovers cards straight from `Indicator:Running:*` in Redis, not from `Indicator:Manifest:Active` — the manifest only lists what `AggregationService` needs to keep live, and deliberately excludes Pivot Central Range (no live phase), but this section should still show PCR once `WarmUpService` computes it each morning.
+
+#### `/api/data-ingestion` and `/api/aggregation` run their per-card Azurite checks concurrently, not sequentially
+
+Found live: each card's status includes an HTTP round-trip to `ohlc-live` (`CheckAzurite`). The
+original code awaited these one at a time in a loop — `/api/aggregation` covers 6 timeframes × N
+tickers, so that's up to a dozen sequential round-trips. Once the day's Azurite CSV blobs grew
+large enough, that pushed the whole endpoint past 15 seconds, which silently hung both this page's
+own polling *and* `home.html`'s landing-page poll (`Promise.all` with no client-side timeout) —
+the console just sat on "Connecting to the stack" forever with no visible error. Fixed two ways:
+1. Both endpoints now build a list of tasks and `Task.WhenAll` them instead of awaiting one at a
+   time — total latency is bounded by the slowest single call, not the sum of all of them.
+2. Both `app.js` and `home.js` now wrap every poll fetch with an explicit ~8s timeout
+   (`AbortController`), so even a future slow endpoint degrades to "unreachable" instead of
+   freezing the page indefinitely.
 
 Ingestion is 1-min only (that's what the pipeline ingests). Aggregation covers every configured timeframe (5/10/15/30/60/75-min) in one flat card grid, sorted by timeframe then contract — no further grouping needed since the whole pipeline (counting, discovery, status computation, card rendering) was already timeframe-generic; the array of timeframes was the only thing scoping it down.
 

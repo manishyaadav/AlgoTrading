@@ -1,4 +1,22 @@
 const REFRESH_MS = 5000;
+const FETCH_TIMEOUT_MS = 8000;
+
+// Bounded with an explicit timeout — plain fetch() has none, so a single slow endpoint (found
+// live: /api/aggregation took 15s+ once the day's Azurite CSV blobs grew large enough) could hang
+// a card's load indefinitely. Fixed at the source too (the endpoints now run their per-ticker
+// checks concurrently instead of one-at-a-time), but this stays as a second line of defense —
+// same fix, same reasoning, as home.js's getJson().
+async function fetchJson(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // Strategy API base — must be declared before the initial showPage() call
 // below (landing directly on #strategy runs loadStrategyGrid() synchronously
@@ -129,6 +147,7 @@ function showPage(key) {
   if (target === "data") {
     loadIngestionStatus();
     loadAggregationStatus();
+    loadIndicatorsStatus();
   }
 }
 
@@ -739,9 +758,7 @@ function candleStatusCardHtml(item) {
 async function loadCandleStatus(endpoint, elementId, emptyText) {
   const el = document.getElementById(elementId);
   try {
-    const res = await fetch(endpoint);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = await res.json();
+    const items = await fetchJson(endpoint);
 
     el.innerHTML = items.length
       ? items.map(candleStatusCardHtml).join("")
@@ -758,6 +775,85 @@ function loadAggregationStatus() {
   return loadCandleStatus("/api/aggregation", "aggregation-status", "No aggregation data yet — nothing has flowed through aggregation-live today.");
 }
 
+// --- Data page: Indicators (EMA / Supertrend / Pivot Central Range) ---
+
+// Deliberately separate from STATUS_LABELS above — "On Track"/"Behind" reads fine for a bar-count
+// progress card, not for "is this indicator's value current". Same four colors, different words.
+const INDICATOR_STATUS_LABELS = { green: "Live", amber: "Delayed", red: "Stale", pending: "Seeding…" };
+
+function formatIndicatorValue(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (Number.isNaN(n)) return esc(value);
+  // Indicator values run to many decimal places internally (EMA's recursive formula never
+  // rounds) — display precision, not storage precision.
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function indicatorCardHtml(item) {
+  const label = INDICATOR_STATUS_LABELS[item.status] || item.status;
+  const refLabel = item.period > 0
+    ? `${esc(item.reference)}(${item.period}${item.multiplier ? "," + item.multiplier : ""})`
+    : esc(item.reference);
+
+  const seedBar = !item.isSeeded && item.seedProgress
+    ? (() => {
+        const [seen, need] = item.seedProgress.split("/").map(Number);
+        const pct = need > 0 ? Math.min(100, (seen / need) * 100) : 0;
+        return `
+          <div class="indicator-seed">
+            <div class="indicator-seed-track"><div class="indicator-seed-fill" style="width:${pct}%"></div></div>
+            <span>${esc(item.seedProgress)} bars seeded</span>
+          </div>`;
+      })()
+    : "";
+
+  const directionBadge = item.direction
+    ? `<span class="badge status-${item.direction === "Up" ? "green" : "red"}">${esc(item.direction)}</span>`
+    : "";
+
+  const meta = item.reference === "Pivot Central Range"
+    ? (item.sessionDate ? `session ${esc(item.sessionDate)}` : "")
+    : [
+        item.lastBarWindowsStartTime ? `last bar ${esc(clockTime(item.lastBarWindowsStartTime))}` : null,
+        item.atr ? `ATR ${formatIndicatorValue(item.atr)}` : null,
+      ].filter(Boolean).join(" · ");
+
+  return `
+    <div class="indicator-row">
+      <div class="candle-row-head">
+        <div>
+          <span class="candle-row-name" style="color:${instrumentColorVar(item.instrument)}">${esc(item.instrument)}</span>
+          <span class="candle-tf">${esc(item.timeframe)}</span>
+        </div>
+        <div>
+          ${directionBadge}
+          <span class="badge status-${item.status}">${esc(label)}</span>
+        </div>
+      </div>
+      <div class="indicator-body">
+        <span class="indicator-ref">${refLabel}</span>
+        <span class="indicator-value">${item.isSeeded ? formatIndicatorValue(item.value) : "—"}</span>
+      </div>
+      ${seedBar}
+      ${meta ? `<div class="candle-row-foot"><span class="candle-row-meta">${meta}</span></div>` : ""}
+    </div>
+  `;
+}
+
+async function loadIndicatorsStatus() {
+  const el = document.getElementById("indicators-status");
+  try {
+    const items = await fetchJson("/api/indicators");
+
+    el.innerHTML = items.length
+      ? items.map(indicatorCardHtml).join("")
+      : `<div class="hint">No indicators seeded yet — WarmUpService seeds these at NSE's Init (09:00 IST), or run it manually (<code>POST /api/warmup/run</code> on warmup-live).</div>`;
+  } catch (err) {
+    el.innerHTML = `<div class="error">Unable to load: ${err.message}</div>`;
+  }
+}
+
 async function refresh() {
   await Promise.all([
     loadServices(),
@@ -765,6 +861,7 @@ async function refresh() {
     loadExchangeTimelines(),
     loadIngestionStatus(),
     loadAggregationStatus(),
+    loadIndicatorsStatus(),
   ]);
   applyPhase();
   document.getElementById("stamp").title = `Data last refreshed ${new Date().toLocaleTimeString()}`;

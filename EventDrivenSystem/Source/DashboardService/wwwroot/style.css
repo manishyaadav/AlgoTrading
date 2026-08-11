@@ -1079,6 +1079,70 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 }
 .candle-row-foot .storage-indicators { margin-top: 0; }
 
+/* --- Indicators (EMA / Supertrend / Pivot Central Range) ---
+   Same card shell as .candle-row (reuses .candle-row-head/.candle-row-foot/.candle-tf/.badge
+   wholesale) — the only new parts are the headline value and the cold-start seed progress bar,
+   since a candle-count rail doesn't make sense for a single scalar indicator value. */
+.indicator-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.indicator-row {
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.indicator-body {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 14px;
+  margin-top: 12px;
+}
+
+.indicator-ref {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.indicator-value {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.indicator-seed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.indicator-seed-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.indicator-seed-fill {
+  height: 100%;
+  background: var(--yellow);
+  transition: width var(--motion-standard);
+}
+
 /* --- Rail: per-bucket ground truth, not an aggregate approximation --------
    The backend sends bucketMap — one char per expected bucket ('a' arrived,
    'm' missing, 'p' pending) straight from the Redis SET's actual members

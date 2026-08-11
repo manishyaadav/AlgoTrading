@@ -149,6 +149,38 @@ face, `--text` instead of `--muted`, an `--accent` dot and top rule. Exchanges' 
 The Strategy rule builder's Long/Short Entry labels stay plain on purpose: they're one level down
 from a section they're already inside, not a page-level heading.
 
+## Indicators (EMA / Supertrend / Pivot Central Range)
+
+Third sub-section under "Aggregation", below Timeframes — was a `.placeholder` block ("nothing
+computes these anywhere yet") until `WarmUpService`'s cold-start seeding and `AggregationService`'s
+live calculators shipped (see `WARMUP_AND_INDICATOR_PLAN.md` section 2e). `GET /api/indicators`
+discovers cards straight from `Indicator:Running:*` in Redis — not from the manifest, since the
+manifest only lists what `AggregationService` needs to keep live (Pivot Central Range is
+deliberately excluded from it, having no live phase), but this section should still show PCR once
+it's computed each morning.
+
+Reuses the `.candle-row` shell wholesale (`.candle-row-head`, `.candle-row-foot`, `.candle-tf`,
+`.badge`) — an indicator card is the same "name + timeframe + status badge, then content, then
+meta footer" shape as an ingestion/aggregation card, just with a different middle section:
+`.indicator-body` (the headline value, right-aligned, `Fira Code` tabular-nums at 22px — one size
+up from `.candle-count` since this is the card's whole reason to exist, not a footnote on it) in
+place of the bucket-map rail, since a single scalar value has no 375-bucket session to visualize.
+A cold-start-in-progress instance (`isSeeded: false`) shows `.indicator-seed` — a thin progress
+bar, `N/Period bars seeded` — instead of a value; there's nothing to display yet, and "—" alone
+would read as broken rather than as "still warming up".
+
+Status badge reuses the exact same four colors as everywhere else on this page (`status-green` /
+`-amber` / `-red` / `-pending`, freshness-of-latest-arrival via `ComputeStatus`) but **different
+label text** (`INDICATOR_STATUS_LABELS`, not `STATUS_LABELS`) — "On Track"/"Behind" reads fine for
+a bar-count progress card, not for "is this indicator's value current"; "Live"/"Delayed"/"Stale"/
+"Seeding…" do. Same colors, different words, because the *meaning* of green is still "current",
+just phrased for what's actually being judged.
+
+Supertrend gets an extra `Up`/`Down` direction badge (green/red respectively, reusing
+`status-green`/`status-red`) next to the freshness badge — the two are independent facts (a
+Supertrend can be solidly "Down" and still be stale, or "Up" and perfectly live), so they're two
+separate badges, not one conflated indicator.
+
 ## Checklist
 
 - [ ] Rows stay full-width and stacked

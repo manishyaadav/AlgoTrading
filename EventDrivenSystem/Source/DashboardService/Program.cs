@@ -229,18 +229,26 @@ app.MapGet("/api/data-ingestion", async () =>
 {
     try
     {
-        var results = new List<CandleCountStatus>();
         // Provider isn't hardcoded — "DataIngestion:{Provider}:{Ticker}" keys are scanned and both
         // segments are pulled out, so a future provider (Zerodha, Kite, NSE direct, ...) shows up
         // automatically the moment it starts writing to Redis, no code change needed here.
-        foreach (var (provider, ticker) in await DiscoverProviderTickers(redisLazy.Value, "DataIngestion:*", providerSegmentIndex: 1, tickerSegmentIndex: 2))
-        {
-            results.Add(await BuildCandleCountStatus(
-                redisLazy.Value, ohlcHttpClient, ticker, timeframeMinutes: 1,
-                countKeyPrefix: $"Ingestion:Count:{provider}",
-                snapshotKeyBuilder: t => $"DataIngestion:{provider}:{t}",
-                provider: provider));
-        }
+        //
+        // Built as a list of tasks and awaited together (Task.WhenAll), not one-at-a-time in the
+        // loop — each card's BuildCandleCountStatus makes its own HTTP round-trip to ohlc-live
+        // (CheckAzurite), and as the trading day's monthly CSV blobs grow, that round-trip gets
+        // slower. Sequential awaits meant N tickers cost N times one call's latency; running them
+        // concurrently caps the whole endpoint at roughly one call's latency regardless of N. This
+        // is what was silently hanging both this page and home.html's landing-page poll (which has
+        // no client-side fetch timeout) once the day's data grew large enough — found live, not
+        // theoretically: /api/aggregation was timing out past 15s before this fix.
+        var tickers = await DiscoverProviderTickers(redisLazy.Value, "DataIngestion:*", providerSegmentIndex: 1, tickerSegmentIndex: 2);
+        var tasks = tickers.Select(t => BuildCandleCountStatus(
+            redisLazy.Value, ohlcHttpClient, t.Ticker, timeframeMinutes: 1,
+            countKeyPrefix: $"Ingestion:Count:{t.Provider}",
+            snapshotKeyBuilder: tk => $"DataIngestion:{t.Provider}:{tk}",
+            provider: t.Provider));
+
+        var results = await Task.WhenAll(tasks);
         return Results.Ok(results.OrderBy(r => r.Contract));
     }
     catch (Exception ex)
@@ -257,24 +265,51 @@ app.MapGet("/api/aggregation", async () =>
         // comes back generically (timeframe badge, rail, expected-total math all derive
         // from item.timeframe per card) — this array was the only thing scoping it to 5-min.
         int[] timeframes = { 5, 10, 15, 30, 60, 75 };
-        var results = new List<CandleCountStatus>();
 
-        foreach (var tf in timeframes)
+        // Same concurrency fix as /api/data-ingestion above, more pronounced here — 2 tickers ×
+        // 6 timeframes means 12 sequential CheckAzurite round-trips in the old code, so this
+        // endpoint was the one actually observed timing out (>15s) once the day's CSV blobs grew.
+        var perTimeframe = await Task.WhenAll(timeframes.Select(async tf =>
         {
-            foreach (var ticker in await DiscoverTickers(redisLazy.Value, $"Aggregation:OHLC:*:{tf}:Min", 2))
-            {
-                results.Add(await BuildCandleCountStatus(
-                    redisLazy.Value, ohlcHttpClient, ticker, timeframeMinutes: tf,
-                    countKeyPrefix: "Aggregation:Count",
-                    snapshotKeyBuilder: t => $"Aggregation:OHLC:{t}:{tf}:Min"));
-            }
-        }
+            var tickers = await DiscoverTickers(redisLazy.Value, $"Aggregation:OHLC:*:{tf}:Min", 2);
+            return await Task.WhenAll(tickers.Select(ticker => BuildCandleCountStatus(
+                redisLazy.Value, ohlcHttpClient, ticker, timeframeMinutes: tf,
+                countKeyPrefix: "Aggregation:Count",
+                snapshotKeyBuilder: t => $"Aggregation:OHLC:{t}:{tf}:Min")));
+        }));
 
+        var results = perTimeframe.SelectMany(r => r);
         return Results.Ok(results.OrderBy(r => r.Timeframe).ThenBy(r => r.Contract));
     }
     catch (Exception ex)
     {
         return Results.Problem($"Unable to build aggregation status: {ex.Message}");
+    }
+});
+
+app.MapGet("/api/indicators", async () =>
+{
+    try
+    {
+        // Discovered straight from Redis (Indicator:Running:*), not from the manifest — the
+        // manifest only ever lists period-based instances AggregationService needs to keep live
+        // (WarmUpService deliberately excludes Pivot Central Range, since it has no live phase),
+        // but this page should still show PCR once it's computed. Same "whatever's actually
+        // there drives the view" philosophy as DiscoverTickers/DiscoverProviderTickers above.
+        var results = new List<IndicatorStatusItem>();
+        var server = redisLazy.Value.GetServer(redisLazy.Value.GetEndPoints().First());
+
+        await foreach (var key in server.KeysAsync(pattern: "Indicator:Running:*"))
+        {
+            var item = await BuildIndicatorStatus(redisLazy.Value, key.ToString());
+            if (item != null) results.Add(item);
+        }
+
+        return Results.Ok(results.OrderBy(r => r.Instrument).ThenBy(r => r.TimeframeMinutes).ThenBy(r => r.Reference));
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Unable to build indicator status: {ex.Message}");
     }
 });
 
@@ -416,24 +451,132 @@ static string ComputeStatus(long count, int expectedSoFar, double? latestAgeSeco
     return "red";
 }
 
+// Indicator:Running:{Instrument}:{Timeframe}:{Reference}:{Period}:{Multiplier} — see
+// WarmUpService/Indicators (seed) and AggregationService/Indicators (live update) for who writes
+// this. Parsed straight out of the key rather than carried separately, same as this file already
+// does for provider/ticker elsewhere — Instrument/Timeframe/Reference are known not to contain
+// ':' today (see SessionCloseGapFillFunction.cs's identical caveat on the ingestion side).
+static async Task<IndicatorStatusItem?> BuildIndicatorStatus(ConnectionMultiplexer redis, string key)
+{
+    var segments = key.Split(':');
+    if (segments.Length < 7) return null; // "Indicator","Running",Instrument,Timeframe,Reference,Period,Multiplier
+    string instrument = segments[2];
+    string timeframe = segments[3];
+    string reference = segments[4];
+    int.TryParse(segments[5], out int period);
+    int.TryParse(segments[6], out int multiplier);
+
+    var db = redis.GetDatabase();
+    var hash = await db.HashGetAllAsync(key);
+    if (hash.Length == 0) return null;
+    var map = hash.ToDictionary(h => h.Name.ToString(), h => h.Value.ToString());
+
+    bool isPivotCentralRange = period == 0 && string.Equals(reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase);
+
+    if (isPivotCentralRange)
+    {
+        // No live phase — recomputed fresh every Init, so "seeded" isn't a meaningful concept
+        // here and it's never stale during the day it's valid for (see plan doc section 2e).
+        return new IndicatorStatusItem(
+            instrument, timeframe, ParseTimeframeMinutes(timeframe), reference, period, multiplier,
+            Status: "green", IsSeeded: true, Value: map.GetValueOrDefault("Width"), Direction: null,
+            Atr: null, SeedProgress: null, LastBarWindowsStartTime: null,
+            SessionDate: map.GetValueOrDefault("SessionDate"));
+    }
+
+    bool isSeeded = map.TryGetValue("IsSeeded", out var seededRaw) && seededRaw == "true";
+    string? lastBar = map.GetValueOrDefault("LastBarWindowsStartTime");
+    int timeframeMinutes = ParseTimeframeMinutes(timeframe);
+
+    string? value = null, direction = null, atr = null, seedProgress = null;
+
+    if (string.Equals(reference, "EMA", StringComparison.OrdinalIgnoreCase))
+    {
+        value = map.GetValueOrDefault("LastEma");
+        if (!isSeeded)
+            seedProgress = $"{map.GetValueOrDefault("SeedBarsSeenSoFar", "0")}/{period}";
+    }
+    else if (string.Equals(reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
+    {
+        direction = map.GetValueOrDefault("TrendDirection");
+        // Same rule the live calculator itself uses: the value in play is whichever band the
+        // trend is currently tracking — the upper band while trending down, the lower band while
+        // trending up (see SupertrendCalculator.cs).
+        value = direction == "Down" ? map.GetValueOrDefault("PrevUpperBand") : map.GetValueOrDefault("PrevLowerBand");
+        atr = map.GetValueOrDefault("Atr");
+    }
+    else
+    {
+        // Unknown indicator shape — still show something rather than silently dropping the row.
+        value = map.Values.FirstOrDefault();
+    }
+
+    string status;
+    if (!isSeeded)
+    {
+        status = "pending"; // seed in progress or blocked — WarmUpService's job to fill this in, not a live-candle concern
+    }
+    else
+    {
+        double? ageSeconds = DateTime.TryParse(lastBar, out var lastBarParsed)
+            ? (IstNow() - lastBarParsed).TotalSeconds
+            : null;
+        status = ComputeStatus(count: 1, expectedSoFar: 1, ageSeconds, timeframeMinutes > 0 ? timeframeMinutes : 5);
+    }
+
+    return new IndicatorStatusItem(
+        instrument, timeframe, timeframeMinutes, reference, period, multiplier,
+        status, isSeeded, value, direction, atr, seedProgress, lastBar, SessionDate: null);
+}
+
+// Mirrors WarmUpService's Common/TimeframeParser.cs / StrategyService's ParseTimeframeToMinutes —
+// same regex, same "Day" == 375 trading minutes convention, so a timeframe string parses to the
+// same number everywhere it's read. Returns -1 (not a guess) on anything unexpected.
+static int ParseTimeframeMinutes(string? timeframe)
+{
+    if (string.IsNullOrWhiteSpace(timeframe)) return -1;
+    var match = System.Text.RegularExpressions.Regex.Match(timeframe.Trim(), @"^(\d+)\s*(Minute|Day)s?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    if (!match.Success) return -1;
+    int value = int.Parse(match.Groups[1].Value);
+    return match.Groups[2].Value.Equals("Day", StringComparison.OrdinalIgnoreCase) ? value * 375 : value;
+}
+
 static async Task<bool> CheckAzurite(HttpClient ohlcClient, string ticker, string date)
 {
     try
     {
-        // ohlc-live resolves instrumentName to a blob purely by whether it contains "bank"+"nifty" —
-        // passing the ticker straight through works for both, see OHLCFunctionApp/GetOHLCDataByDate.cs.
-        var res = await ohlcClient.GetAsync($"/api/GetOHLCDataByDate?date={date}&exchange=nse&instrumentName={Uri.EscapeDataString(ticker)}");
+        if (!DateTime.TryParse(date, out var targetDate)) return false;
+
+        // Deliberately GetOHLCByYearAndMonth, not GetOHLCDataByDate — found live that
+        // GetOHLCDataByDate genuinely hangs for BANKNIFTY specifically (reproduced repeatedly,
+        // 8-10s with no response at all; NIFTY on the same call is fine), while
+        // GetOHLCByYearAndMonth reading the identical underlying blob is consistently fast
+        // (tens of ms) for both tickers. Root cause not fully chased down — plausibly a
+        // read/write race with LiveCandlePersistenceFunction's frequent writes to the same blob,
+        // something Azurite may not handle as gracefully as real Azure Storage — but nothing else
+        // in this codebase calls GetOHLCDataByDate programmatically, so routing around it here is
+        // the safe fix rather than debugging Azurite's concurrency behavior under time pressure.
+        // ohlc-live resolves instrumentName to a blob purely by whether it contains "bank"+"nifty"
+        // — passing the ticker straight through works for both, see BlobPathHelper.GetBlobName.
+        var res = await ohlcClient.GetAsync($"/api/GetOHLCByYearAndMonth?year={targetDate.Year}&month={targetDate.Month}&exchange=nse&instrumentName={Uri.EscapeDataString(ticker)}");
         if (!res.IsSuccessStatusCode) return false;
 
         var body = await res.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
-        // ohlc-live's anonymous response object is written PascalCase ("TotalRecords") but ASP.NET
-        // Core's default serializer emits it camelCase on the wire ("totalRecords") —
-        // TryGetProperty is case-sensitive, so a direct PascalCase lookup here always missed and
-        // this permanently returned false. Match case-insensitively, same as GetField does above
-        // for the holiday/session responses.
-        return GetField(doc.RootElement, "TotalRecords") is string totalStr
-            && int.TryParse(totalStr, out int total) && total > 0;
+        if (!doc.RootElement.TryGetProperty("recods", out var records) || records.ValueKind != JsonValueKind.Array)
+            return false;
+
+        // GetOHLCByYearAndMonth returns the whole month, unfiltered — check client-side whether
+        // any row actually belongs to the target date, same "did today's data land" semantics
+        // CheckAzurite always had, just sourced from a route that doesn't hang.
+        foreach (var record in records.EnumerateArray())
+        {
+            if (GetField(record, "Date") is string dateStr
+                && DateTime.TryParse(dateStr, out var recordDate)
+                && recordDate.Date == targetDate.Date)
+                return true;
+        }
+        return false;
     }
     catch
     {
@@ -526,6 +669,22 @@ record ExchangeStatus(
     string? UpdatedOn,
     string? LastUpdateOn,
     bool IsToday);
+
+record IndicatorStatusItem(
+    string Instrument,
+    string Timeframe,
+    int TimeframeMinutes,
+    string Reference, // "EMA" | "Supertrend" | "Pivot Central Range"
+    int Period,
+    int Multiplier,
+    string Status, // "green" | "amber" | "red" | "pending"
+    bool IsSeeded,
+    string? Value,
+    string? Direction, // Supertrend only: "Up" | "Down"
+    string? Atr, // Supertrend only
+    string? SeedProgress, // e.g. "312/550" — only while IsSeeded is false
+    string? LastBarWindowsStartTime,
+    string? SessionDate); // Pivot Central Range only
 
 record CandleCountStatus(
     string Contract,
