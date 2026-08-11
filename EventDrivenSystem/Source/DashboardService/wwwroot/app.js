@@ -1403,11 +1403,8 @@ function ruleEngineFlowHtml(data) {
 
   return `
     <div class="identity">
-      <div style="flex:1">
-        <div class="identity-name">${esc(data.strategyName)}</div>
-        <div class="identity-meta">${esc((data.instruments || []).join(", "))}${data.exchange ? " · " + esc(data.exchange) : ""}</div>
-      </div>
-      <span class="badge deployed">Deployed v${esc(data.deployedVersion || "—")}</span>
+      <div class="identity-name">${esc(data.strategyName)}</div>
+      <div class="identity-meta">${esc((data.instruments || []).join(", "))}${data.exchange ? " · " + esc(data.exchange) : ""}</div>
     </div>
 
     <div class="rule-workspace">
@@ -1415,14 +1412,10 @@ function ruleEngineFlowHtml(data) {
       ${sourceRailHtml(data.sources)}
       <div class="rule-tree">
     <div class="flow">
-      ${gateNodeHtml(data.deployedGate)}
-      <div class="connector ${data.deployedGate.status}"></div>
-      ${gateNodeHtml(data.sessionGate)}
-      <div class="connector ${data.sessionGate.status}"></div>
       <div class="rule-node ${data.tradingSessionRules.status}">
         <div class="node-head">
           <div>
-            <div class="node-eyebrow">Gate 3 · Trading Session Rules</div>
+            <div class="node-eyebrow">Gate 1 · Trading Session Rules</div>
             <div class="node-title">${esc(data.tradingSessionRules.title)}</div>
           </div>
           <span class="badge status-${data.tradingSessionRules.status}">${RULE_STATUS_LABELS[data.tradingSessionRules.status] || data.tradingSessionRules.status}</span>
@@ -1587,6 +1580,7 @@ document.getElementById("rule-engine-content").addEventListener("click", ev => {
 // strategy disappears (undeployed/deleted), loadRuleEngine falls back to the first one available.
 let ruleEngineSelectedId = null;
 let ruleEngineSwitcherPayload = null;
+let ruleEngineSessionPayload = null;
 
 function strategySwitcherHtml(deployedStrategies, selectedId) {
   if (deployedStrategies.length < 2) return ""; // one deployed strategy: a switcher has nothing to switch between
@@ -1602,8 +1596,14 @@ async function loadRuleEngine() {
   const el = document.getElementById("rule-engine-content");
   const errEl = document.getElementById("rule-engine-error");
   const switcherEl = document.getElementById("rule-engine-switcher");
+  const sessionEl = document.getElementById("rule-engine-session");
   try {
-    const strategies = await fetchJson(`${STRATEGY_API_BASE}/api/strategies`);
+    // Fetched together — the session gate is the same Redis "India" state no matter which
+    // strategy ends up selected, so it doesn't wait on (or depend on) strategy selection at all.
+    const [strategies, sessionGate] = await Promise.all([
+      fetchJson(`${STRATEGY_API_BASE}/api/strategies`),
+      fetchJson(`${STRATEGY_API_BASE}/api/session-status`),
+    ]);
     const deployed = (strategies || []).filter(s => s.deployedVersion);
 
     if (deployed.length === 0) {
@@ -1613,8 +1613,20 @@ async function loadRuleEngine() {
       switcherEl.innerHTML = "";
       ruleEngineSwitcherPayload = null;
       ruleEngineSelectedId = null;
+      sessionEl.hidden = true;
+      sessionEl.innerHTML = "";
+      ruleEngineSessionPayload = null;
       errEl.hidden = true;
       return;
+    }
+
+    // Shared across every deployed strategy, so it's rendered once, above the switcher, instead
+    // of once per strategy the way it used to be duplicated as each strategy's own "Gate 2".
+    const sessionPayload = JSON.stringify(sessionGate);
+    if (sessionPayload !== ruleEngineSessionPayload) {
+      ruleEngineSessionPayload = sessionPayload;
+      sessionEl.innerHTML = `${gateNodeHtml(sessionGate)}<div class="connector ${sessionGate.status}"></div>`;
+      sessionEl.hidden = false;
     }
 
     // Stick with whatever the user picked as long as it's still deployed; otherwise (first load,

@@ -21,15 +21,36 @@ body copy), and the card shell itself (`.rule-node` is `.candle-row`/`.status-ca
 the headline-value/eyebrow layout, and the entry/exit fork — the things this page needed that
 nothing else on the dashboard already had a pattern for.
 
+## Above the spine: what's common to every strategy, shown once
+
+Two things used to be part of every strategy's own gate sequence and weren't actually facts about
+that strategy at all — they've since moved out, each for its own reason:
+
+- **"Strategy deployed?" is gone.** The page only ever reaches a strategy's tree through a
+  strategy that's already known to be deployed (the switcher below is built off `deployedVersion`,
+  and the backend 404s on an undeployed id) — a gate whose answer is always "yes" had nothing left
+  to tell you.
+- **The session/holiday gate moved above the switcher, rendered once.** Redis `"India"` is the same
+  state no matter which deployed strategy is selected — it was never really a fact about *this*
+  strategy, just duplicated inside every strategy's response as if it were. It's now its own
+  standalone `GET /api/session-status` call, rendered with the same `gateNodeHtml()` + `.connector`
+  it always used, just outside `.rule-workspace` instead of as that strategy's own "Gate 2".
+
+**The strategy switcher** (`.strategy-switcher`, a row of `.strategy-chip` buttons) only renders
+when 2+ strategies are deployed at once — one deployed strategy has nothing to switch between, so
+the single-strategy case looks exactly as it always did, chip-less. Clicking a chip re-fetches and
+repaints everything below it (identity, source rail, spine, both forks) for that strategy; the
+session banner above it doesn't change, since it isn't strategy-specific.
+
 ## Layout: a spine, not a grid
 
-Gates 1-4 (Deployed → Session → Trading Session Rules → Position) run down a single vertical
-`.flow`, each `.rule-node` connected to the next by a `.connector` — a 2px line with a small arrow,
-colored to the gate's own status (green on pass, red on fail, the neutral `--line` token while
-still gray/unknown). This is deliberately a spine, not a branching diagram, for the first four
-gates — they're a strict sequence, not a decision tree, so drawing them as one is honest about the
-actual control flow (nothing skips a gate; a `fail` upstream doesn't currently grey out what's
-below it either — see "What this page doesn't do yet" below).
+What's left of the old fixed sequence is genuinely strategy-specific: Gates 1-2 (Trading Session
+Rules → Position) run down a single vertical `.flow`, each `.rule-node` connected to the next by a
+`.connector` — a 2px line with a small arrow, colored to the gate's own status (green on pass, red
+on fail, the neutral `--line` token while still gray/unknown). Still a spine, not a branching
+diagram — a strict sequence, not a decision tree, so drawing it as one is honest about the actual
+control flow (nothing skips a gate; a `fail` upstream doesn't currently grey out what's below it
+either — see "What this page doesn't do yet" below).
 
 **The fork happens once, at the Position gate** — `.fork` (`display:grid;
 grid-template-columns:1fr 1fr`) splits into the "not in position" column (Entry Rules, live) and
@@ -197,8 +218,8 @@ a *live* Entry Rules card but are themselves each individually tagged unknown).
 
 ## What this page doesn't do yet (by design, not oversight)
 
-- **No cascading dim.** A `fail` on Gate 2 (no session today) doesn't currently grey out gates 3-4
-  or the forks below — every gate always renders its own real status against real data,
+- **No cascading dim.** A `fail` on the session gate doesn't currently grey out any strategy's
+  spine or forks below it — every gate always renders its own real status against real data,
   independent of what's above it. Worth revisiting once this page has been lived with — a
   Holiday/Weekend day showing a fully "evaluated" Entry Rules card below a failed session gate
   could read as misleading. Deferred rather than guessed at, same as everything else on this page.
@@ -206,9 +227,6 @@ a *live* Entry Rules card but are themselves each individually tagged unknown).
   `WARMUP_AND_INDICATOR_PLAN.md`) and explicitly rejected for v1 in favor of the honest permanent
   placeholder — a fake toggle would let you "see" the Exit branch light up without it meaning
   anything, which is exactly the kind of thing this page exists to avoid.
-- **No strategy picker.** Only one strategy is ever deployed today, so `loadRuleEngine()` just
-  takes the first one `/api/strategies` reports as deployed. Add a picker when a second one
-  actually gets deployed, not before — no UI for a problem that doesn't exist yet.
 
 ## Checklist
 

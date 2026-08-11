@@ -117,6 +117,18 @@ namespace StrategyService
             }
         }
 
+        // Not under strategies/ — the session/holiday gate isn't a fact about any one strategy (see
+        // RuleEvaluator.BuildSessionGateAsync's doc comment), so it gets its own top-level route
+        // rather than being folded into strategies/{id}/rule-status.
+        [Function(nameof(GetSessionStatus))]
+        public async Task<HttpResponseData> GetSessionStatus(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "session-status")] HttpRequestData req)
+        {
+            var live = new LiveDataSnapshot(_redisHelper);
+            var gate = await Engine.RuleEvaluator.BuildSessionGateAsync(live);
+            return await JsonResponse(req, HttpStatusCode.OK, gate);
+        }
+
         [Function(nameof(SaveStrategy))]
         public async Task<HttpResponseData> SaveStrategy(
             [HttpTrigger(AuthorizationLevel.Anonymous, "put", "post", Route = "strategies/{id}")] HttpRequestData req, string id)

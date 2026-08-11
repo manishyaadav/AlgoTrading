@@ -125,39 +125,25 @@ namespace StrategyService.Engine
             return ids;
         }
 
-        public static async Task<RuleStatusResponse> BuildAsync(string strategyId, Strategy.Strategy strategy, LiveDataSnapshot live)
+        // The session/holiday gate is the same Redis "India" state no matter which strategy is
+        // selected — it's not a fact about any one strategy's rule tree, it's a precondition every
+        // deployed strategy shares. Evaluated once, standalone (StrategyFunctions.GetSessionStatus),
+        // rather than duplicated inside every strategy's own rule-status response the way it used
+        // to be. Strategy deployment itself (the old "Gate 1") isn't evaluated at all anymore: the
+        // only way to reach BuildAsync is already through a deployed strategy (GetRuleStatus 404s
+        // otherwise, and the dashboard's switcher only ever lists deployed ones), so a gate whose
+        // answer is always "yes" had nothing left to tell you.
+        public static async Task<GateNode> BuildSessionGateAsync(LiveDataSnapshot live)
         {
-            var ts = strategy.Strategies?.FirstOrDefault();
-            var registry = new SourceRegistry();
-
-            // Gate 1 reads the strategy file, not Redis — it has no live input, and gets no source
-            // card rather than a synthetic one standing in for "the deployment record".
-            bool isDeployed = !string.IsNullOrEmpty(strategy.DeployedVersion);
-            var deployedGate = new GateNode(
-                "Gate 1", "Strategy deployed?",
-                isDeployed ? "pass" : "fail",
-                isDeployed
-                    ? $"{strategy.StrategyName} has a deployed version (v{strategy.DeployedVersion})."
-                    : $"{strategy.StrategyName} has no deployed version — nothing below applies until it's deployed.",
-                new List<ValueChip>(),
-                new List<string>());
-
-            string sessionSourceId = registry.Touch("session:India", "Session state", "India · country gate", "session");
             string? sessionState = await live.GetSessionStateAsync();
-            if (sessionState != null)
-                registry.Fill("session:India", sessionState, "not a holiday or weekend", "India", null,
-                    new List<EvidenceField> { new("State", sessionState) });
-            else
-                registry.FillUnresolved("session:India", "key not found — country-live/notification-live may not have run today", "India");
-
             string sessionStatus = sessionState switch
             {
                 null => "unknown",
                 "Normal" => "pass",
                 _ => "fail", // Holiday / Weekend
             };
-            var sessionGate = new GateNode(
-                "Gate 2 · Country gate, read from Redis \"India\"", "Is there a session today?",
+            return new GateNode(
+                "Session gate · common to every deployed strategy, read from Redis \"India\"", "Is there a session today?",
                 sessionStatus,
                 sessionState == null
                     ? "Session-state key not found in Redis — country-live/notification-live may not have run yet today."
@@ -165,7 +151,13 @@ namespace StrategyService.Engine
                         ? "Not a holiday, not a weekend — the day is gated open."
                         : $"Today is a {sessionState} — no session, nothing below runs.",
                 new List<ValueChip> { new("state", sessionState ?? "—", sessionStatus == "pass" ? "pass" : sessionStatus == "fail" ? "fail" : null) },
-                new List<string> { sessionSourceId });
+                new List<string>());
+        }
+
+        public static async Task<RuleStatusResponse> BuildAsync(string strategyId, Strategy.Strategy strategy, LiveDataSnapshot live)
+        {
+            var ts = strategy.Strategies?.FirstOrDefault();
+            var registry = new SourceRegistry();
 
             var tradingSessionRules = ts == null
                 ? new RuleGroup("Trading Session Rules", "unknown", true, new List<RuleEvaluation>())
@@ -179,7 +171,7 @@ namespace StrategyService.Engine
             registry.FillUnresolved("unbacked:position", "no PortfolioService, no Redis key, no topic — nothing tracks this anywhere in the stack", null);
 
             var positionGate = new GateNode(
-                "Gate 4", "In a position?",
+                "Gate 2", "In a position?",
                 "unknown",
                 "No position/order tracking exists in this stack yet — this gate has nothing real to check. The branch below is drawn assuming not in position, since that's the only branch with anything live behind it today.",
                 new List<ValueChip>(),
@@ -199,8 +191,6 @@ namespace StrategyService.Engine
                 strategy.Exchange,
                 ts?.Instruments ?? new List<string>(),
                 strategy.DeployedVersion,
-                deployedGate,
-                sessionGate,
                 tradingSessionRules,
                 positionGate,
                 longStatus,

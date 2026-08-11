@@ -90,17 +90,21 @@ currently evaluate to, not the execution engine itself (see `WARMUP_AND_INDICATO
 This service's first Redis dependency (`RedisConfig/RedisHelper.cs`) — it was pure CRUD-over-files
 until this needed to read live indicator/session state.
 
+404s if `id` has no deployed version — the page only ever calls this for a strategy it already
+knows is deployed (its strategy switcher is built off `GET /api/strategies`' `deployedVersion`
+field), so "is this strategy deployed?" isn't part of the response; there'd be nothing to evaluate
+otherwise.
+
 **What actually evaluates today, and what stays honestly "unknown"** — every rule is resolved, not
 just the ones that happen to work, so a strategy with different rule shapes degrades the same way
 rather than silently doing nothing:
 
 | Resolves live | Doesn't (marked `unknown`, with a reason) |
 |---|---|
-| Country session gate (Redis `"India"`) | Anything needing account/capital state (Risk Management rules) |
-| Pivot Central Range vs. `N × Closing Price (Previous)` — needs `PriorClose`, see `WarmUpService/README.md` | Anything needing position/order state (Update-Stop-Loss, Exit rules — see the Position gate below) |
-| EMA vs. a literal or another indicator | `RelativePosition: "Previous"` on EMA/Supertrend/PCR — only the current running state is kept, no separate prior-bar snapshot |
-| Supertrend vs. EMA (numeric) | Any other raw Expression (`Candle High/Low`, `Current Profit`, `Time in Trade`, `Trading Session State`, …) — no live source for these anywhere yet |
-| Supertrend vs. `"GREEN"`/`"RED"` (Literal) — translates Redis's `TrendDirection: "Up"/"Down"` via the standard TradingView convention, the one place that translation happens anywhere in this codebase | |
+| Pivot Central Range vs. `N × Closing Price (Previous)` — needs `PriorClose`, see `WarmUpService/README.md` | Anything needing account/capital state (Risk Management rules) |
+| EMA vs. a literal or another indicator | Anything needing position/order state (Update-Stop-Loss, Exit rules — see the Position gate below) |
+| Supertrend vs. EMA (numeric) | `RelativePosition: "Previous"` on EMA/Supertrend/PCR — only the current running state is kept, no separate prior-bar snapshot |
+| Supertrend vs. `"GREEN"`/`"RED"` (Literal) — translates Redis's `TrendDirection: "Up"/"Down"` via the standard TradingView convention, the one place that translation happens anywhere in this codebase | Any other raw Expression (`Candle High/Low`, `Current Profit`, `Time in Trade`, `Trading Session State`, …) — no live source for these anywhere yet |
 
 **The "In a position?" gate is a permanent placeholder** — confirmed via full repo search while
 building this: no `PortfolioService`, no position/order Redis key, no Kafka topic, nothing tracks
@@ -108,12 +112,24 @@ this anywhere. The page draws the Entry Rules branch as live (the only branch an
 the Exit/Stop-Loss/Risk-Management branches as a static, never-evaluated preview of the same rule
 tree, honestly labeled as such rather than pretending to have an answer.
 
-Response shape: `{ strategyId, strategyName, exchange, instruments, deployedVersion, deployedGate,
-sessionGate, tradingSessionRules, positionGate, long: {entryRules, riskManagementRules,
-exitBranch}, short: {...} }`. Each evaluated rule carries the *original* `TradingRule` (same shape
-`GetStrategy` already returns) plus `status` (`"pass"`/`"fail"`/`"unknown"`), `reason` (only when
-unknown), and a `left`/`right` `OperandEvidence` pair — the dashboard reuses its existing
+Response shape: `{ strategyId, strategyName, exchange, instruments, deployedVersion,
+tradingSessionRules, positionGate, long: {entryRules, riskManagementRules, exitBranch}, short:
+{...} }`. Each evaluated rule carries the *original* `TradingRule` (same shape `GetStrategy` already
+returns) plus `status` (`"pass"`/`"fail"`/`"unknown"`), `reason` (only when unknown), and a
+`left`/`right` `OperandEvidence` pair — the dashboard reuses its existing
 `describeRule()`/`describeOperand()` for the rule text rather than this service formatting it twice.
+
+### Session gate — `GET /api/session-status`
+
+The holiday/weekend check (Redis `"India"`, the same key `country-live`/`notification-live`
+maintain) isn't a fact about any one strategy — it's identical no matter which deployed strategy
+you're looking at. It used to be duplicated inside every strategy's own `rule-status` response as
+that strategy's "Gate 2"; now it's evaluated once, standalone, and the dashboard renders it above
+the strategy switcher rather than repeating it per strategy. Returns a single `GateNode`: `{
+eyebrow, title, status, detail, values, sourceIds }` — the same shape `positionGate` and the old
+per-strategy gates already used, so the dashboard's existing `gateNodeHtml()` renders it with no
+new markup. `sourceIds` is always `[]` here — this endpoint stands alone, with no evidence-drawer
+registry backing it the way a strategy's own rule tree has.
 
 **`OperandEvidence` — where each side's value actually came from.** Not just the answer: the page
 renders a per-rule drawer showing the derivation, so "why does it think RED" is answerable without
@@ -179,6 +195,7 @@ Route prefix: `api` (default). All responses are JSON, camelCase, with permissiv
 | GET | `/api/strategies/warm-up-plan` | The warm-up plan derived from the manifest — array of `{instrument, daysToFetch, reasons, strategyIds}` (see above) |
 | GET | `/api/strategies/{id}` | Full strategy JSON |
 | GET | `/api/strategies/{id}/rule-status` | The deployed rule tree evaluated against live Redis state — see above |
+| GET | `/api/session-status` | The holiday/weekend gate, common to every deployed strategy — see above |
 | PUT / POST | `/api/strategies/{id}` | Create or overwrite — body is validated as parseable JSON before writing; `Version` is server-computed (see above), `DeployedVersion` carries over unchanged; on-disk file is re-serialized in PascalCase regardless of what casing was sent |
 | POST | `/api/strategies/{id}/deploy` | Set `DeployedVersion` = current `Version`. No other side effects yet |
 | DELETE | `/api/strategies/{id}` | Delete that strategy entirely — every version file in `saved/` plus the current `deployed/` file, if any |

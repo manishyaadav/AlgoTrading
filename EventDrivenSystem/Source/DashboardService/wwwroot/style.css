@@ -1400,6 +1400,12 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   .link-layer { display: none; }
 }
 
+/* The session/holiday gate, common to every deployed strategy — shown once, above the switcher,
+   rather than duplicated inside each strategy's own tree. Reuses .rule-node.gate/.connector as-is
+   (via gateNodeHtml), just needs the same bottom margin the switcher/identity blocks use so the
+   page reads as one stacked sequence rather than a gate floating with no relation to what's below. */
+.session-banner { margin-bottom: 16px; }
+
 /* Only rendered when 2+ strategies are deployed at once (loadRuleEngine hides/empties it
    otherwise) — one deployed strategy has nothing to switch between, so the single-strategy case
    stays exactly as it looked before this existed. Chips wrap rather than scroll: a handful of
@@ -1438,8 +1444,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .strategy-chip.active .chip-name { color: var(--accent); }
 .chip-meta { font-size: 11px; color: var(--muted); }
 
+/* Just name + meta now — the deployed-version badge that used to sit alongside them was dropped
+   (redundant: only deployed strategies ever reach this page, and the switcher chip above already
+   shows the version). Stacked, not a row, now that there's only one thing in here. */
 .identity {
-  display: flex; align-items: center; gap: 12px;
   background: var(--surface);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);

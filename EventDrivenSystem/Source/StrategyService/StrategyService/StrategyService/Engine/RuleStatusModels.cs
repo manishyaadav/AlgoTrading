@@ -87,14 +87,17 @@ namespace StrategyService.Engine
         RuleGroup RiskManagementRules,
         RuleGroup ExitBranch); // UpdateStopLossRules + ExitRules combined, in that order
 
+    // DeployedGate and SessionGate used to live here too. Deployment is no longer worth asking
+    // about — BuildAsync only ever runs against a strategy that's already known to be deployed
+    // (see RuleEvaluator.BuildAsync's doc note). Session state moved to its own standalone
+    // endpoint/gate (RuleEvaluator.BuildSessionGateAsync) since it's identical for every strategy,
+    // not a fact about this one.
     public record RuleStatusResponse(
         string StrategyId,
         string StrategyName,
         string? Exchange,
         List<string> Instruments,
         string? DeployedVersion,
-        GateNode DeployedGate,
-        GateNode SessionGate,
         RuleGroup TradingSessionRules,
         GateNode PositionGate,
         EntryExitStatus Long,
