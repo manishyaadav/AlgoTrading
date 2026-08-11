@@ -278,6 +278,32 @@ app.MapGet("/api/aggregation", async () =>
     }
 });
 
+app.MapGet("/api/indicators", async () =>
+{
+    try
+    {
+        // Discovered straight from Redis (Indicator:Running:*), not from the manifest — the
+        // manifest only ever lists period-based instances AggregationService needs to keep live
+        // (WarmUpService deliberately excludes Pivot Central Range, since it has no live phase),
+        // but this page should still show PCR once it's computed. Same "whatever's actually
+        // there drives the view" philosophy as DiscoverTickers/DiscoverProviderTickers above.
+        var results = new List<IndicatorStatusItem>();
+        var server = redisLazy.Value.GetServer(redisLazy.Value.GetEndPoints().First());
+
+        await foreach (var key in server.KeysAsync(pattern: "Indicator:Running:*"))
+        {
+            var item = await BuildIndicatorStatus(redisLazy.Value, key.ToString());
+            if (item != null) results.Add(item);
+        }
+
+        return Results.Ok(results.OrderBy(r => r.Instrument).ThenBy(r => r.TimeframeMinutes).ThenBy(r => r.Reference));
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Unable to build indicator status: {ex.Message}");
+    }
+});
+
 app.Run();
 
 // Scans for keys matching `pattern` and pulls the ticker out of segment index `tickerSegmentIndex`
@@ -416,6 +442,96 @@ static string ComputeStatus(long count, int expectedSoFar, double? latestAgeSeco
     return "red";
 }
 
+// Indicator:Running:{Instrument}:{Timeframe}:{Reference}:{Period}:{Multiplier} — see
+// WarmUpService/Indicators (seed) and AggregationService/Indicators (live update) for who writes
+// this. Parsed straight out of the key rather than carried separately, same as this file already
+// does for provider/ticker elsewhere — Instrument/Timeframe/Reference are known not to contain
+// ':' today (see SessionCloseGapFillFunction.cs's identical caveat on the ingestion side).
+static async Task<IndicatorStatusItem?> BuildIndicatorStatus(ConnectionMultiplexer redis, string key)
+{
+    var segments = key.Split(':');
+    if (segments.Length < 7) return null; // "Indicator","Running",Instrument,Timeframe,Reference,Period,Multiplier
+    string instrument = segments[2];
+    string timeframe = segments[3];
+    string reference = segments[4];
+    int.TryParse(segments[5], out int period);
+    int.TryParse(segments[6], out int multiplier);
+
+    var db = redis.GetDatabase();
+    var hash = await db.HashGetAllAsync(key);
+    if (hash.Length == 0) return null;
+    var map = hash.ToDictionary(h => h.Name.ToString(), h => h.Value.ToString());
+
+    bool isPivotCentralRange = period == 0 && string.Equals(reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase);
+
+    if (isPivotCentralRange)
+    {
+        // No live phase — recomputed fresh every Init, so "seeded" isn't a meaningful concept
+        // here and it's never stale during the day it's valid for (see plan doc section 2e).
+        return new IndicatorStatusItem(
+            instrument, timeframe, ParseTimeframeMinutes(timeframe), reference, period, multiplier,
+            Status: "green", IsSeeded: true, Value: map.GetValueOrDefault("Width"), Direction: null,
+            Atr: null, SeedProgress: null, LastBarWindowsStartTime: null,
+            SessionDate: map.GetValueOrDefault("SessionDate"));
+    }
+
+    bool isSeeded = map.TryGetValue("IsSeeded", out var seededRaw) && seededRaw == "true";
+    string? lastBar = map.GetValueOrDefault("LastBarWindowsStartTime");
+    int timeframeMinutes = ParseTimeframeMinutes(timeframe);
+
+    string? value = null, direction = null, atr = null, seedProgress = null;
+
+    if (string.Equals(reference, "EMA", StringComparison.OrdinalIgnoreCase))
+    {
+        value = map.GetValueOrDefault("LastEma");
+        if (!isSeeded)
+            seedProgress = $"{map.GetValueOrDefault("SeedBarsSeenSoFar", "0")}/{period}";
+    }
+    else if (string.Equals(reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
+    {
+        direction = map.GetValueOrDefault("TrendDirection");
+        // Same rule the live calculator itself uses: the value in play is whichever band the
+        // trend is currently tracking — the upper band while trending down, the lower band while
+        // trending up (see SupertrendCalculator.cs).
+        value = direction == "Down" ? map.GetValueOrDefault("PrevUpperBand") : map.GetValueOrDefault("PrevLowerBand");
+        atr = map.GetValueOrDefault("Atr");
+    }
+    else
+    {
+        // Unknown indicator shape — still show something rather than silently dropping the row.
+        value = map.Values.FirstOrDefault();
+    }
+
+    string status;
+    if (!isSeeded)
+    {
+        status = "pending"; // seed in progress or blocked — WarmUpService's job to fill this in, not a live-candle concern
+    }
+    else
+    {
+        double? ageSeconds = DateTime.TryParse(lastBar, out var lastBarParsed)
+            ? (IstNow() - lastBarParsed).TotalSeconds
+            : null;
+        status = ComputeStatus(count: 1, expectedSoFar: 1, ageSeconds, timeframeMinutes > 0 ? timeframeMinutes : 5);
+    }
+
+    return new IndicatorStatusItem(
+        instrument, timeframe, timeframeMinutes, reference, period, multiplier,
+        status, isSeeded, value, direction, atr, seedProgress, lastBar, SessionDate: null);
+}
+
+// Mirrors WarmUpService's Common/TimeframeParser.cs / StrategyService's ParseTimeframeToMinutes —
+// same regex, same "Day" == 375 trading minutes convention, so a timeframe string parses to the
+// same number everywhere it's read. Returns -1 (not a guess) on anything unexpected.
+static int ParseTimeframeMinutes(string? timeframe)
+{
+    if (string.IsNullOrWhiteSpace(timeframe)) return -1;
+    var match = System.Text.RegularExpressions.Regex.Match(timeframe.Trim(), @"^(\d+)\s*(Minute|Day)s?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    if (!match.Success) return -1;
+    int value = int.Parse(match.Groups[1].Value);
+    return match.Groups[2].Value.Equals("Day", StringComparison.OrdinalIgnoreCase) ? value * 375 : value;
+}
+
 static async Task<bool> CheckAzurite(HttpClient ohlcClient, string ticker, string date)
 {
     try
@@ -526,6 +642,22 @@ record ExchangeStatus(
     string? UpdatedOn,
     string? LastUpdateOn,
     bool IsToday);
+
+record IndicatorStatusItem(
+    string Instrument,
+    string Timeframe,
+    int TimeframeMinutes,
+    string Reference, // "EMA" | "Supertrend" | "Pivot Central Range"
+    int Period,
+    int Multiplier,
+    string Status, // "green" | "amber" | "red" | "pending"
+    bool IsSeeded,
+    string? Value,
+    string? Direction, // Supertrend only: "Up" | "Down"
+    string? Atr, // Supertrend only
+    string? SeedProgress, // e.g. "312/550" — only while IsSeeded is false
+    string? LastBarWindowsStartTime,
+    string? SessionDate); // Pivot Central Range only
 
 record CandleCountStatus(
     string Contract,
