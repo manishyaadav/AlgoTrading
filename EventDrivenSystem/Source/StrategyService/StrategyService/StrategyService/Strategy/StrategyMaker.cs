@@ -74,6 +74,15 @@ namespace StrategyService.Strategy
         private static Strategy? GetSavedById(string id)
             => LoadAllFrom(SavedConfigFolder).FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)).Strategy;
 
+        /// <summary>
+        /// The actual deployed rule content for `id`, not the saved draft — used anywhere that needs
+        /// to evaluate/describe what's really live right now (the Rule Engine page), as opposed to
+        /// GetById's "current draft, deployed version number overlaid for display" shape. Null if
+        /// nothing has ever been deployed for this id.
+        /// </summary>
+        public static Strategy? GetDeployedById(string id)
+            => LoadAllFrom(DeployedConfigFolder).FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)).Strategy;
+
         private static string? GetDeployedVersionForId(string id)
         {
             var file = FindFileForId(id, DeployedConfigFolder);

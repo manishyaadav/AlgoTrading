@@ -3,6 +3,8 @@ using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using StrategyService.Engine;
+using StrategyService.RedisConfig;
 using StrategyService.Strategy;
 
 namespace StrategyService
@@ -10,10 +12,12 @@ namespace StrategyService
     public class StrategyFunctions
     {
         private readonly ILogger<StrategyFunctions> _logger;
+        private readonly RedisHelper _redisHelper;
 
-        public StrategyFunctions(ILogger<StrategyFunctions> logger)
+        public StrategyFunctions(ILogger<StrategyFunctions> logger, RedisHelper redisHelper)
         {
             _logger = logger;
+            _redisHelper = redisHelper;
         }
 
         [Function(nameof(ListStrategies))]
@@ -82,6 +86,35 @@ namespace StrategyService
                 return await JsonResponse(req, HttpStatusCode.NotFound, new { error = $"No strategy with id '{id}'" });
 
             return await JsonResponse(req, HttpStatusCode.OK, strategy);
+        }
+
+        // "strategies/{id}/rule-status", a sub-route under {id} (not a bare strategies/<literal>) —
+        // no routing-ambiguity risk from the GetDataWarmUpPlan issue above, same reason
+        // strategies/{id}/deploy already works fine right next to strategies/{id}.
+        //
+        // Reads the actual DEPLOYED rule tree (not the saved draft — StrategyMaker.GetDeployedById,
+        // not GetById) and evaluates it against whatever live indicator/session state is actually in
+        // Redis right now. Read-only, no side effects — see Engine/RuleEvaluator.cs's own doc
+        // comment for the "no execution engine exists, this only visualizes" scope note.
+        [Function(nameof(GetRuleStatus))]
+        public async Task<HttpResponseData> GetRuleStatus(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strategies/{id}/rule-status")] HttpRequestData req, string id)
+        {
+            var strategy = StrategyMaker.GetDeployedById(id);
+            if (strategy == null)
+                return await JsonResponse(req, HttpStatusCode.NotFound, new { error = $"No deployed strategy with id '{id}'" });
+
+            try
+            {
+                var live = new LiveDataSnapshot(_redisHelper);
+                var status = await Engine.RuleEvaluator.BuildAsync(id, strategy, live);
+                return await JsonResponse(req, HttpStatusCode.OK, status);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to build rule status for '{Id}'", id);
+                return await JsonResponse(req, HttpStatusCode.InternalServerError, new { error = $"Unable to build rule status: {ex.Message}" });
+            }
         }
 
         [Function(nameof(SaveStrategy))]

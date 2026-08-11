@@ -67,6 +67,7 @@ const ICONS = {
   sliders: `<path d="M4 6h6M14 6h6M4 12h10M18 12h2M4 18h13M21 18h0"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="19" cy="18" r="2"/>`,
   bell: `<path d="M6.5 8.5a5.5 5.5 0 0 1 11 0c0 4.5 1.8 5.8 1.8 5.8H4.7s1.8-1.3 1.8-5.8z"/><path d="M9.7 18a2.3 2.3 0 0 0 4.6 0"/>`,
   building: `<path d="M4 21h16M6 21V6.5L12 3l6 3.5V21"/><path d="M9.5 21v-5h5v5"/><path d="M9 9h1.4M13.6 9H15M9 13h1.4M13.6 13H15"/>`,
+  pulse: `<path d="M4 12h4l2-7 4 14 2-7h4"/>`, // Rule Engine — a live signal being checked, not a static gear
 };
 
 function iconFor(composeService) {
@@ -148,6 +149,10 @@ function showPage(key) {
     loadIngestionStatus();
     loadAggregationStatus();
     loadIndicatorsStatus();
+  }
+
+  if (target === "rule-engine") {
+    loadRuleEngine();
   }
 }
 
@@ -862,6 +867,7 @@ async function refresh() {
     loadIngestionStatus(),
     loadAggregationStatus(),
     loadIndicatorsStatus(),
+    loadRuleEngine(),
   ]);
   applyPhase();
   document.getElementById("stamp").title = `Data last refreshed ${new Date().toLocaleTimeString()}`;
@@ -1127,6 +1133,149 @@ function ruleListReadonlyHtml(title, rules, titleClass = "rules-section-title") 
         : `<div class="hint">No rules defined.</div>`}
     </div>
   `;
+}
+
+/* ── Rule Engine page ────────────────────────────────────────────────────── */
+
+const RULE_STATUS_LABELS = { pass: "Pass", fail: "Fail", unknown: "Unknown" };
+
+function gateNodeHtml(gate, stageClass) {
+  const values = (gate.values || []).map(v =>
+    `<div class="value-chip"><span class="k">${esc(v.key)}</span><span class="v ${v.tone || ""}">${esc(v.value)}</span></div>`
+  ).join("");
+
+  return `
+    <div class="rule-node ${stageClass || ""}">
+      <div class="node-head">
+        <div>
+          <div class="node-eyebrow">${esc(gate.eyebrow)}</div>
+          <div class="node-title">${esc(gate.title)}</div>
+        </div>
+        <span class="badge status-${gate.status}">${RULE_STATUS_LABELS[gate.status] || gate.status}</span>
+      </div>
+      ${values ? `<div class="node-values">${values}</div>` : ""}
+      <div class="node-detail">${esc(gate.detail)}</div>
+    </div>`;
+}
+
+function ruleEvalRowHtml(ev) {
+  const tag = ev.status === "unknown" && ev.reason
+    ? `<span class="unwired-tag" title="${esc(ev.reason)}">${esc(ev.reason.length > 34 ? ev.reason.slice(0, 34) + "…" : ev.reason)}</span>`
+    : `<span class="badge status-${ev.status}">${RULE_STATUS_LABELS[ev.status] || ev.status}</span>`;
+
+  return `
+    <div class="rule-row">
+      <span class="rule-text">${describeRule(ev.rule)}</span>
+      ${tag}
+    </div>`;
+}
+
+function ruleGroupBodyHtml(group) {
+  if (!group.rules.length) return `<div class="hint" style="margin-top:8px">No rules defined.</div>`;
+  return `<div class="rule-list">${group.rules.map(ruleEvalRowHtml).join("")}</div>`;
+}
+
+function entryExitColumnHtml(label, labelClass, entryExit) {
+  return `
+    <div class="fork-col">
+      <div class="fork-label ${labelClass}">${esc(label)}</div>
+      <div class="rule-node ${entryExit.entryRules.live ? "" : "placeholder-node"}">
+        <div class="node-head">
+          <div class="node-title">${esc(entryExit.entryRules.title)}</div>
+          <span class="badge status-${entryExit.entryRules.status}">${RULE_STATUS_LABELS[entryExit.entryRules.status] || entryExit.entryRules.status}</span>
+        </div>
+        ${ruleGroupBodyHtml(entryExit.entryRules)}
+        <div class="node-eyebrow" style="margin-top:14px">${esc(entryExit.riskManagementRules.title)}</div>
+        ${ruleGroupBodyHtml(entryExit.riskManagementRules)}
+      </div>
+    </div>`;
+}
+
+function exitColumnHtml(entryExit) {
+  return `
+    <div class="fork-col">
+      <div class="fork-label dim">○ In position — static preview</div>
+      <div class="rule-node placeholder-node">
+        <div class="node-head">
+          <div class="node-title">${esc(entryExit.exitBranch.title)}</div>
+          <span class="badge unknown">Not evaluated</span>
+        </div>
+        ${ruleGroupBodyHtml(entryExit.exitBranch)}
+        <div class="node-detail" style="margin-top:10px">Same rule tree, drawn for reference — never actually evaluates until the position gate above has something real to check.</div>
+      </div>
+    </div>`;
+}
+
+function ruleEngineFlowHtml(data) {
+  const sideBlock = (label, entryExit) => `
+    <div class="rule-side">
+      <div class="rule-side-label">${esc(label)}</div>
+      <div class="fork">
+        ${entryExitColumnHtml("● Not in position — live", "live", entryExit)}
+        ${exitColumnHtml(entryExit)}
+      </div>
+    </div>`;
+
+  return `
+    <div class="identity">
+      <div style="flex:1">
+        <div class="identity-name">${esc(data.strategyName)}</div>
+        <div class="identity-meta">${esc((data.instruments || []).join(", "))}${data.exchange ? " · " + esc(data.exchange) : ""}</div>
+      </div>
+      <span class="badge deployed">Deployed v${esc(data.deployedVersion || "—")}</span>
+    </div>
+
+    <div class="flow">
+      ${gateNodeHtml(data.deployedGate)}
+      <div class="connector ${data.deployedGate.status}"></div>
+      ${gateNodeHtml(data.sessionGate)}
+      <div class="connector ${data.sessionGate.status}"></div>
+      <div class="rule-node ${data.tradingSessionRules.status}">
+        <div class="node-head">
+          <div>
+            <div class="node-eyebrow">Gate 3 · Trading Session Rules</div>
+            <div class="node-title">${esc(data.tradingSessionRules.title)}</div>
+          </div>
+          <span class="badge status-${data.tradingSessionRules.status}">${RULE_STATUS_LABELS[data.tradingSessionRules.status] || data.tradingSessionRules.status}</span>
+        </div>
+        ${ruleGroupBodyHtml(data.tradingSessionRules)}
+      </div>
+      <div class="connector ${data.tradingSessionRules.status}"></div>
+      ${gateNodeHtml(data.positionGate, "placeholder-node")}
+      <div class="connector"></div>
+    </div>
+
+    ${sideBlock("Long", data.long)}
+    ${sideBlock("Short", data.short)}
+
+    <div class="legend">
+      <span><span class="dot pass"></span>Pass — a real live value satisfied the condition</span>
+      <span><span class="dot fail"></span>Fail — a real live value did not satisfy it</span>
+      <span><span class="dot unknown"></span>Unknown — no data source exists for this yet</span>
+    </div>
+  `;
+}
+
+async function loadRuleEngine() {
+  const el = document.getElementById("rule-engine-content");
+  const errEl = document.getElementById("rule-engine-error");
+  try {
+    const strategies = await fetchJson(`${STRATEGY_API_BASE}/api/strategies`);
+    const deployed = (strategies || []).find(s => s.deployedVersion);
+
+    if (!deployed) {
+      el.innerHTML = `<div class="hint">No deployed strategy yet — deploy one from the Strategy page first.</div>`;
+      errEl.hidden = true;
+      return;
+    }
+
+    const status = await fetchJson(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(deployed.id)}/rule-status`);
+    el.innerHTML = ruleEngineFlowHtml(status);
+    errEl.hidden = true;
+  } catch (err) {
+    errEl.hidden = false;
+    errEl.textContent = `Unable to load: ${err.message}`;
+  }
 }
 
 function strategyError(message) {

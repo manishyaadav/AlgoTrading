@@ -226,6 +226,13 @@ namespace WarmUpService.Functions
                     new("TopCentral", pcr.TopCentral.ToString(CultureInfo.InvariantCulture)),
                     new("BottomCentral", pcr.BottomCentral.ToString(CultureInfo.InvariantCulture)),
                     new("Width", pcr.Width.ToString(CultureInfo.InvariantCulture)),
+                    // Yesterday's raw close — computed right here to seed PCR itself, but previously
+                    // discarded the moment this method returned. The deployed strategy's own
+                    // TradingSessionRules gate compares PCR against "0.0038 * Closing Price
+                    // (Previous)" — without persisting this, nothing downstream could ever evaluate
+                    // that comparison for real. Piggybacking it on the PCR hash rather than a new key,
+                    // since it's a byproduct of this exact computation, not an independent value.
+                    new("PriorClose", priorSession.Close.ToString(CultureInfo.InvariantCulture)),
                     new("SessionDate", pcr.SessionDate.ToString("yyyy-MM-dd")),
                 }, TimeSpan.FromDays(IndicatorStateTtlDays));
 

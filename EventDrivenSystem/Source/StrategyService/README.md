@@ -38,7 +38,7 @@ Shape (matches the `Strategy`/`TradingStrategy`/`TradingRule`/`Operand` C# model
 
 A `TradingRule` is `{ Sequence, LeftOperand, Operator, RightOperand, Link }` where `Link` chains to the next rule (`"AND"`/`"OR"`/`""`). An `Operand` is `{ Type: "Indicator"|"Literal"|"Expression", Value, Properties }`, where `Properties` carries `Period`/`Multiplier`/`Timeframe`/`Instrument`/`RelativePosition` for indicator-type operands.
 
-**This is a schema, not an execution engine** — nothing in this service (or anywhere else in the stack yet) actually evaluates these rules against live data. See the root README's architecture notes for the current known gaps in the example strategy (`second-income.json`) if you're extending this.
+**This is a schema, not an execution engine** — nothing in this service (or anywhere else in the stack) generates a real entry/exit trigger or places an order; that's still fully undesigned (see `WARMUP_AND_INDICATOR_PLAN.md` section 4, "Strategy execution engine"). What *does* now exist is smaller and read-only: `GET /api/strategies/{id}/rule-status` (below) evaluates this rule tree against live Redis state for display purposes — see that section for the distinction. See the root README's architecture notes for the current known gaps in the example strategy (`second-income.json`) if you're extending this.
 
 ### Fixed value lists (dashboard form)
 
@@ -78,6 +78,48 @@ An instrument's `daysToFetch` is the max `daysNeeded` across every reason that n
 
 If a strategy references an instrument other than the one you're expecting, it shows up as its own entry in the same array automatically — nothing here is hardcoded to NIFTY.
 
+### Rule Engine — `GET /api/strategies/{id}/rule-status`
+
+Backs the dashboard's **Rule Engine** page (`http://localhost:8099/#rule-engine`). Reads the actual
+**deployed** rule tree (`StrategyMaker.GetDeployedById`, not the saved draft) and walks it top to
+bottom, evaluating each `TradingRule` against whatever live data actually exists in Redis right
+now — `Engine/RuleEvaluator.cs`. Read-only: this is a *visualization* of what the rules would
+currently evaluate to, not the execution engine itself (see `WARMUP_AND_INDICATOR_PLAN.md` section
+4) — no side effects, nothing written back to Redis, no order ever placed.
+
+This service's first Redis dependency (`RedisConfig/RedisHelper.cs`) — it was pure CRUD-over-files
+until this needed to read live indicator/session state.
+
+**What actually evaluates today, and what stays honestly "unknown"** — every rule is resolved, not
+just the ones that happen to work, so a strategy with different rule shapes degrades the same way
+rather than silently doing nothing:
+
+| Resolves live | Doesn't (marked `unknown`, with a reason) |
+|---|---|
+| Country session gate (Redis `"India"`) | Anything needing account/capital state (Risk Management rules) |
+| Pivot Central Range vs. `N × Closing Price (Previous)` — needs `PriorClose`, see `WarmUpService/README.md` | Anything needing position/order state (Update-Stop-Loss, Exit rules — see the Position gate below) |
+| EMA vs. a literal or another indicator | `RelativePosition: "Previous"` on EMA/Supertrend/PCR — only the current running state is kept, no separate prior-bar snapshot |
+| Supertrend vs. EMA (numeric) | Any other raw Expression (`Candle High/Low`, `Current Profit`, `Time in Trade`, `Trading Session State`, …) — no live source for these anywhere yet |
+| Supertrend vs. `"GREEN"`/`"RED"` (Literal) — translates Redis's `TrendDirection: "Up"/"Down"` via the standard TradingView convention, the one place that translation happens anywhere in this codebase | |
+
+**The "In a position?" gate is a permanent placeholder** — confirmed via full repo search while
+building this: no `PortfolioService`, no position/order Redis key, no Kafka topic, nothing tracks
+this anywhere. The page draws the Entry Rules branch as live (the only branch anything backs) and
+the Exit/Stop-Loss/Risk-Management branches as a static, never-evaluated preview of the same rule
+tree, honestly labeled as such rather than pretending to have an answer.
+
+Response shape: `{ strategyId, strategyName, exchange, instruments, deployedVersion, deployedGate,
+sessionGate, tradingSessionRules, positionGate, long: {entryRules, riskManagementRules,
+exitBranch}, short: {...} }`. Each evaluated rule carries the *original* `TradingRule` (same shape
+`GetStrategy` already returns) plus `status` (`"pass"`/`"fail"`/`"unknown"`), `leftResolved`/
+`rightResolved` (display strings), and `reason` (only when unknown) — the dashboard reuses its
+existing `describeRule()`/`describeOperand()` for the rule text rather than this service
+formatting it twice.
+
+```bash
+curl http://localhost:8096/api/strategies/second-income/rule-status
+```
+
 ⚠️ **Azure Functions routing gotcha, if you add another `strategies/<literal>` route**: the isolated-worker HTTP router resolves an ambiguous literal-vs-`{id}` match by **function name alphabetical order**, not route specificity. `GetDataRequirements` (D) sorts before `GetStrategy` (S) and correctly wins; a function literally named `GetWarmUpPlan` (W) sorts *after* `GetStrategy` and silently loses — every request landed in `GetStrategy` with a `"No strategy with id 'warm-up-plan'"` 404, despite both routes showing up correctly in the startup log's "Mapped function route" lines. Renaming the function to `GetDataWarmUpPlan` (matching the "GetData…" prefix that's already proven to sort correctly) fixed it. Name any future literal-route function so it alphabetically precedes `GetStrategy`.
 
 ## HTTP API
@@ -90,6 +132,7 @@ Route prefix: `api` (default). All responses are JSON, camelCase, with permissiv
 | GET | `/api/strategies/data-requirements` | The deployed-strategies data-requirements manifest — array of `{instrument, timeframe, strategyIds, references}` (see above) |
 | GET | `/api/strategies/warm-up-plan` | The warm-up plan derived from the manifest — array of `{instrument, daysToFetch, reasons, strategyIds}` (see above) |
 | GET | `/api/strategies/{id}` | Full strategy JSON |
+| GET | `/api/strategies/{id}/rule-status` | The deployed rule tree evaluated against live Redis state — see above |
 | PUT / POST | `/api/strategies/{id}` | Create or overwrite — body is validated as parseable JSON before writing; `Version` is server-computed (see above), `DeployedVersion` carries over unchanged; on-disk file is re-serialized in PascalCase regardless of what casing was sent |
 | POST | `/api/strategies/{id}/deploy` | Set `DeployedVersion` = current `Version`. No other side effects yet |
 | DELETE | `/api/strategies/{id}` | Delete that strategy's file |
@@ -132,3 +175,4 @@ docker-compose -f docker-compose-live.yml -p live up -d strategy-live   # recrea
 | `AzureWebJobsStorage` | points at `azurite-live` |
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` |
 | `ASPNETCORE_ENVIRONMENT` | `docker` |
+| `RedisConnectionString` | `redis-live:6379` — needed by `GET /api/strategies/{id}/rule-status` (see above); this service's first Redis dependency |

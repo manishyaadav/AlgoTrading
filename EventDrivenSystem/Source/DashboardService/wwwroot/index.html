@@ -52,6 +52,7 @@
     <button class="nav-item" data-page="exchanges" data-icon="building"><span class="nav-icon"></span><span class="nav-label">Exchanges</span></button>
     <button class="nav-item" data-page="data" data-icon="stack"><span class="nav-icon"></span><span class="nav-label">Data</span></button>
     <button class="nav-item" data-page="strategy" data-icon="target"><span class="nav-icon"></span><span class="nav-label">Strategy</span></button>
+    <button class="nav-item" data-page="rule-engine" data-icon="pulse"><span class="nav-icon"></span><span class="nav-label">Rule Engine</span></button>
     <button class="nav-item" data-page="datasync" data-icon="sync"><span class="nav-icon"></span><span class="nav-label">Data Sync</span></button>
     <button class="nav-item" data-page="backtest" data-icon="history"><span class="nav-icon"></span><span class="nav-label">Backtest</span></button>
     <button class="nav-item" data-page="broker" data-icon="sliders"><span class="nav-icon"></span><span class="nav-label">Broker Configuration</span></button>
@@ -115,6 +116,15 @@
         <div id="strategy-grid" class="strategy-grid">Loading…</div>
 
         <div id="strategy-panel" class="strategy-panel" hidden></div>
+      </section>
+    </div>
+
+    <div class="page" data-page="rule-engine">
+      <section>
+        <h2><span class="section-icon" data-icon="pulse"></span>Rule Engine</h2>
+        <p class="hint">Walks the deployed strategy's rule tree top to bottom, evaluating each condition against whatever live data actually backs it right now. <code>Pass</code>/<code>Fail</code> means a real value was checked; <code>Unknown</code> means the data behind that rule doesn't exist in this stack yet — never a guess standing in for a real result.</p>
+        <div id="rule-engine-error" class="error" hidden></div>
+        <div id="rule-engine-content" class="rule-flow">Loading…</div>
       </section>
     </div>
 
