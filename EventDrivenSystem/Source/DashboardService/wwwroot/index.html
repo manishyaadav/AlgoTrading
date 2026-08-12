@@ -143,11 +143,26 @@
     <div class="page" data-page="backtest">
       <section>
         <h2><span class="section-icon" data-icon="history"></span>Backtest</h2>
-        <div class="placeholder">
-          <span class="placeholder-icon" data-icon="history"></span>
-          <p>Run and review strategy backtests against historical OHLC data.</p>
-          <p class="hint">Not wired up yet — placeholder page.</p>
+        <p class="hint">Pick a strategy and a date range, then run it against real historical OHLC data — simulates entries/exits bar by bar off the strategy's own rules, no separate backtest-only config. Uses the strategy's current saved draft, deployed or not.</p>
+
+        <div class="backtest-form">
+          <div class="form-field">
+            <label for="bt-strategy">Strategy</label>
+            <select id="bt-strategy"></select>
+          </div>
+          <div class="form-field">
+            <label for="bt-start">Start date</label>
+            <input type="date" id="bt-start">
+          </div>
+          <div class="form-field">
+            <label for="bt-end">End date</label>
+            <input type="date" id="bt-end">
+          </div>
+          <button type="button" class="btn btn-primary" id="bt-run">Run Backtest</button>
         </div>
+
+        <div id="backtest-error" class="error" hidden></div>
+        <div id="backtest-results"></div>
       </section>
     </div>
 

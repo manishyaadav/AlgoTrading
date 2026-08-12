@@ -154,6 +154,12 @@ function showPage(key) {
   if (target === "rule-engine") {
     loadRuleEngine();
   }
+
+  // Just populates the strategy picker — running the backtest itself is an explicit, expensive
+  // user action (POST .../backtest), never something the 5s refresh() cycle should trigger.
+  if (target === "backtest") {
+    loadBacktestForm();
+  }
 }
 
 NAV_ITEMS.forEach(btn => {
@@ -2000,3 +2006,190 @@ document.getElementById("strategy-panel").addEventListener("change", e => {
   }
 });
 // initial load, if the strategy grid is already the active page, is handled by showPage() above
+
+/* ── Backtest page ────────────────────────────────────────────────────────
+   Simulates a strategy's own rules bar-by-bar against real historical data — see
+   StrategyService/Backtest/BacktestEngine.cs for the actual simulation. This page only ever POSTs
+   on an explicit "Run Backtest" click; unlike every other page, it's never touched by the 5s
+   refresh() cycle — a backtest is a real, potentially several-second server computation, not
+   status to poll. */
+
+// Just the strategy picker, populated on every visit to the page (same "don't show stale data from
+// a previous visit" reasoning the Strategy page's own loadStrategyGrid() already follows) — running
+// a backtest itself is the separate, explicit action below.
+async function loadBacktestForm() {
+  const select = document.getElementById("bt-strategy");
+  const startInput = document.getElementById("bt-start");
+  const endInput = document.getElementById("bt-end");
+
+  // Default range: the last 30 calendar days — just a reasonable starting point to have something
+  // pre-filled, not a claim that history actually goes back that far. The backtest itself is what
+  // honestly reports whether the picked range has real data (see the insufficient-data path below).
+  if (!endInput.value) {
+    const today = new Date();
+    const start = new Date(today);
+    start.setDate(start.getDate() - 30);
+    endInput.value = today.toISOString().slice(0, 10);
+    startInput.value = start.toISOString().slice(0, 10);
+  }
+
+  try {
+    const strategies = await fetchJson(`${STRATEGY_API_BASE}/api/strategies`);
+    const current = select.value;
+    select.innerHTML = (strategies || []).length
+      ? strategies.map(s => `<option value="${esc(s.id)}">${esc(s.strategyName)}${s.deployedVersion ? "" : " (not deployed)"}</option>`).join("")
+      : `<option value="">No strategies yet</option>`;
+    if (current && [...select.options].some(o => o.value === current)) select.value = current;
+    backtestError(null);
+  } catch (err) {
+    backtestError(`Unable to load strategy list: ${err.message}`);
+  }
+}
+
+function backtestError(message) {
+  const el = document.getElementById("backtest-error");
+  if (!message) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  el.textContent = message;
+}
+
+function btStatusHtml(icon, tone, title, detailHtml) {
+  return `
+    <div class="bt-status ${tone}">
+      <span class="bt-status-icon ${tone}">${icon}</span>
+      <div>
+        <div class="bt-status-title">${esc(title)}</div>
+        <div class="bt-status-detail">${detailHtml}</div>
+      </div>
+    </div>`;
+}
+
+function btStatTile(label, value, tone, sub) {
+  return `
+    <div class="bt-stat">
+      <div class="bt-stat-label">${esc(label)}</div>
+      <div class="bt-stat-value ${tone || ""}">${esc(String(value))}</div>
+      ${sub ? `<div class="bt-stat-sub">${esc(sub)}</div>` : ""}
+    </div>`;
+}
+
+function btFormatPoints(n) {
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// "2026-07-24T11:19:00" -> "24 Jul, 11:19" — compact, still unambiguous within the kind of
+// sub-year range a backtest is typically run over.
+function btFormatDateTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function backtestStatsHtml(stats) {
+  // decimal.MaxValue (all wins, zero losses) round-trips through JSON as a real but enormous
+  // number — shown as ∞ rather than the literal digits, which is what it actually means here.
+  const profitFactorDisplay = stats.profitFactor > 1e6 ? "∞" : stats.profitFactor;
+
+  return `
+    <div class="bt-stats-grid">
+      ${btStatTile("Total trades", stats.totalTrades)}
+      ${btStatTile("Win rate", `${stats.winRatePct}%`, stats.winRatePct >= 50 ? "pass" : "fail", `${stats.wins}W / ${stats.losses}L`)}
+      ${btStatTile("Total points", btFormatPoints(stats.totalPoints), stats.totalPoints >= 0 ? "pass" : "fail")}
+      ${btStatTile("Profit factor", profitFactorDisplay, stats.profitFactor >= 1 ? "pass" : "fail")}
+      ${btStatTile("Avg win", btFormatPoints(stats.averageWinPoints), "pass")}
+      ${btStatTile("Avg loss", btFormatPoints(stats.averageLossPoints), "fail")}
+      ${btStatTile("Largest win", btFormatPoints(stats.largestWinPoints), "pass")}
+      ${btStatTile("Largest loss", btFormatPoints(stats.largestLossPoints), "fail")}
+      ${btStatTile("Max drawdown", `-${Math.abs(stats.maxDrawdownPoints).toFixed(2)}`, stats.maxDrawdownPoints > 0 ? "fail" : "")}
+      ${btStatTile("Longest win streak", stats.longestWinStreak)}
+      ${btStatTile("Longest loss streak", stats.longestLossStreak)}
+    </div>`;
+}
+
+function backtestTradesHtml(trades) {
+  if (!trades.length) return "";
+  const rows = trades.map(t => `
+    <tr>
+      <td><span class="bt-side ${t.side.toLowerCase()}">${esc(t.side)}</span></td>
+      <td class="num">${esc(btFormatDateTime(t.entryTime))}</td>
+      <td class="num">${Number(t.entryPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+      <td class="num">${esc(btFormatDateTime(t.exitTime))}</td>
+      <td class="num">${Number(t.exitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+      <td class="num pnl ${t.pointsPnl >= 0 ? "pass" : "fail"}">${btFormatPoints(t.pointsPnl)}</td>
+      <td class="reason">${esc(t.exitReason)}${t.forcedCloseAtPeriodEnd ? " <em>(open at period end)</em>" : ""}</td>
+    </tr>`).join("");
+
+  return `
+    <div class="bt-trades-title">Trades (${trades.length})</div>
+    <div class="bt-trades-scroll">
+      <table class="bt-trade-table">
+        <thead><tr><th>Side</th><th>Entry</th><th>Entry Price</th><th>Exit</th><th>Exit Price</th><th>Points</th><th>Exit reason</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// One switch on BacktestResponse.status — every shape the backend can honestly report (see
+// BacktestModels.cs) gets its own plain-language card; "completed" is the only one that also draws
+// stats/a trade table, and even then only when at least one trade actually happened.
+function renderBacktestResponse(data) {
+  if (data.status === "insufficient-data") {
+    const missing = (data.dataAvailability?.days || []).filter(d => !d.exists).map(d => d.date);
+    const missingHtml = missing.length ? `<div class="bt-missing-days">${missing.map(d => `<span class="bt-missing-day">${esc(d)}</span>`).join("")}</div>` : "";
+    return btStatusHtml("!", "warn", "Not enough historical data for this range", esc(data.message) + missingHtml);
+  }
+
+  if (data.status === "no-entry-rules" || data.status === "no-instrument") {
+    return btStatusHtml("?", "warn", "Nothing to simulate", esc(data.message));
+  }
+
+  if (data.status === "error") {
+    return btStatusHtml("✕", "fail", "Backtest couldn't run", esc(data.message));
+  }
+
+  const hasTrades = data.trades && data.trades.length > 0;
+  const summary = hasTrades
+    ? btStatusHtml("✓", data.stats.totalPoints >= 0 ? "pass" : "fail",
+        `${data.instrument} · ${data.simulationTimeframe} bars · ${data.startDate.slice(0, 10)} → ${data.endDate.slice(0, 10)}`,
+        esc(data.message))
+    : btStatusHtml("○", "warn", "No trades", esc(data.message));
+
+  return summary + (hasTrades ? backtestStatsHtml(data.stats) + backtestTradesHtml(data.trades) : "");
+}
+
+async function runBacktest() {
+  const strategyId = document.getElementById("bt-strategy").value;
+  const startDate = document.getElementById("bt-start").value;
+  const endDate = document.getElementById("bt-end").value;
+  const resultsEl = document.getElementById("backtest-results");
+  const runBtn = document.getElementById("bt-run");
+
+  backtestError(null);
+  if (!strategyId) return backtestError("Pick a strategy first.");
+  if (!startDate || !endDate) return backtestError("Pick both a start and end date.");
+  if (endDate < startDate) return backtestError("End date must be on or after the start date.");
+
+  runBtn.disabled = true;
+  runBtn.textContent = "Running…";
+  resultsEl.innerHTML = `<div class="hint">Fetching historical data and simulating trades — this can take a few seconds for a longer range.</div>`;
+
+  try {
+    const res = await fetch(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(strategyId)}/backtest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate, endDate }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    resultsEl.innerHTML = renderBacktestResponse(data);
+  } catch (err) {
+    resultsEl.innerHTML = "";
+    backtestError(`Backtest failed: ${err.message}`);
+  } finally {
+    runBtn.disabled = false;
+    runBtn.textContent = "Run Backtest";
+  }
+}
+
+document.getElementById("bt-run").addEventListener("click", runBacktest);

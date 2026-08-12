@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using StrategyService.Backtest;
 using StrategyService.Engine;
 using StrategyService.RedisConfig;
 using StrategyService.Strategy;
@@ -13,11 +14,13 @@ namespace StrategyService
     {
         private readonly ILogger<StrategyFunctions> _logger;
         private readonly RedisHelper _redisHelper;
+        private readonly BacktestOhlcClient _backtestOhlcClient;
 
-        public StrategyFunctions(ILogger<StrategyFunctions> logger, RedisHelper redisHelper)
+        public StrategyFunctions(ILogger<StrategyFunctions> logger, RedisHelper redisHelper, BacktestOhlcClient backtestOhlcClient)
         {
             _logger = logger;
             _redisHelper = redisHelper;
+            _backtestOhlcClient = backtestOhlcClient;
         }
 
         [Function(nameof(ListStrategies))]
@@ -114,6 +117,50 @@ namespace StrategyService
             {
                 _logger.LogError(ex, "Failed to build rule status for '{Id}'", id);
                 return await JsonResponse(req, HttpStatusCode.InternalServerError, new { error = $"Unable to build rule status: {ex.Message}" });
+            }
+        }
+
+        // Runs against the CURRENT SAVED draft (GetById), not GetDeployedById — unlike the live Rule
+        // Engine page, a backtest is explicitly a pre-deployment validation tool, so it needs to work
+        // on a strategy that's never been deployed at all (Accumulation, at the time this was built)
+        // just as well as on a live one. Body: { "startDate": "yyyy-MM-dd", "endDate": "yyyy-MM-dd" }.
+        [Function(nameof(RunBacktest))]
+        public async Task<HttpResponseData> RunBacktest(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "strategies/{id}/backtest")] HttpRequestData req, string id)
+        {
+            var strategy = StrategyMaker.GetById(id);
+            if (strategy == null)
+                return await JsonResponse(req, HttpStatusCode.NotFound, new { error = $"No strategy with id '{id}'" });
+
+            string body;
+            using (var reader = new StreamReader(req.Body))
+                body = await reader.ReadToEndAsync();
+
+            DateTime startDate, endDate;
+            try
+            {
+                var range = JsonSerializer.Deserialize<BacktestRequest>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new JsonException("empty body");
+                startDate = range.StartDate.Date;
+                endDate = range.EndDate.Date;
+            }
+            catch (JsonException)
+            {
+                return await JsonResponse(req, HttpStatusCode.BadRequest, new { error = "Request body must be { \"startDate\": \"yyyy-MM-dd\", \"endDate\": \"yyyy-MM-dd\" }" });
+            }
+
+            if (endDate < startDate)
+                return await JsonResponse(req, HttpStatusCode.BadRequest, new { error = "endDate must be on or after startDate" });
+
+            try
+            {
+                var result = await Backtest.BacktestEngine.RunAsync(strategy, startDate, endDate, _backtestOhlcClient);
+                return await JsonResponse(req, HttpStatusCode.OK, result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Backtest failed for '{Id}' [{Start}..{End}]", id, startDate, endDate);
+                return await JsonResponse(req, HttpStatusCode.InternalServerError, new { error = $"Backtest failed: {ex.Message}" });
             }
         }
 

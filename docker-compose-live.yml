@@ -282,6 +282,7 @@ services:
       "ASPNETCORE_ENVIRONMENT": "docker"
       "TZ": "Asia/Kolkata"
       "RedisConnectionString": "redis-live:6379"
+      "OhlcApiBase": "http://ohlc-live"
     volumes:
       # bind-mounted (not baked into the image) so strategies added/edited via the API
       # land as real files in the repo, and new files dropped in here need no rebuild
@@ -289,6 +290,7 @@ services:
     depends_on:
       - azurite-live
       - redis-live
+      - ohlc-live
     restart: unless-stopped
     networks:
       - live-network
