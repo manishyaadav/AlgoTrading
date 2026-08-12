@@ -1137,52 +1137,35 @@ function ruleListReadonlyHtml(title, rules, titleClass = "rules-section-title") 
 
 /* ── Rule Engine page ────────────────────────────────────────────────────── */
 
-const RULE_STATUS_LABELS = { pass: "Pass", fail: "Fail", unknown: "Unknown" };
+const RULE_STATUS_LABELS = { pass: "Pass", fail: "Fail", unknown: "Can't evaluate" };
 
-function gateNodeHtml(gate, stageClass) {
-  const values = (gate.values || []).map(v =>
-    `<div class="value-chip"><span class="k">${esc(v.key)}</span><span class="v ${v.tone || ""}">${esc(v.value)}</span></div>`
-  ).join("");
+/* ── "Focus" redesign ────────────────────────────────────────────────────
+   Replaces the old always-show-everything spine (every gate, both sides, entry AND exit, plus an
+   interactive source rail with per-rule evidence drawers) with a single-branch view: pick a side
+   (Long/Short) and a lens (Entry/Exit/Risk), and only that branch's chain renders. The trade-off
+   is real — the old page could answer "what does the whole tree look like right now" at a glance;
+   this one answers "is THIS path armed" faster, at the cost of the others being a click away. The
+   interactive evidence-drawer/hover-linking system is gone with it, not hidden — a "Reads" strip
+   at the bottom of whatever's on screen replaces it with the plain current values, no drill-down.
+   See design-system/algotrading-dashboard/pages/rule-engine.md. */
 
-  return `
-    <div class="rule-node gate ${stageClass || ""}" data-sources="${esc((gate.sourceIds || []).join(" "))}">
-      <div class="node-head">
-        <div>
-          <div class="node-eyebrow">${esc(gate.eyebrow)}</div>
-          <div class="node-title">${esc(gate.title)}</div>
-        </div>
-        <span class="badge status-${gate.status}">${RULE_STATUS_LABELS[gate.status] || gate.status}</span>
-      </div>
-      ${values ? `<div class="node-values">${values}</div>` : ""}
-      <div class="node-detail">${esc(gate.detail)}</div>
-    </div>`;
-}
-
-/* Which rule rows have their evidence drawer open, keyed by the stable scope:sequence key built
-   in ruleGroupBodyHtml(). Kept outside the render so a 5s refresh that genuinely changes the
-   payload re-opens whatever the user had open, rather than collapsing it under them. */
-const ruleEngineOpenRows = new Set();
 let ruleEngineLastPayload = null;
 
-// One side of a comparison: what the rule asked for, and what that actually resolved to right now.
-// A Literal's resolved value is its own name, so it renders once rather than twice — repeating
-// "GREEN / GREEN" would read like two independent facts agreeing.
-function operandSideHtml(operand, evidence, align) {
-  const name = describeOperand(operand);
-  const isLiteral = evidence && evidence.kind === "literal";
-  const resolved = evidence && evidence.display;
-
-  const valueLine = isLiteral
-    ? `<div class="cmp-value literal">literal</div>`
-    : resolved
-      ? `<div class="cmp-value">${esc(resolved)}</div>`
-      : `<div class="cmp-value none">—</div>`;
-
-  return `
-    <div class="cmp-side ${align}">
-      <div class="cmp-name">${name}</div>
-      ${valueLine}
-    </div>`;
+// One side of a comparison, inline rather than stacked — "Supertrend 24,438.76 < EMA P550
+// 24,505.93" reads left to right the way the rule itself does. describeOperand() still carries
+// the period/timeframe/instrument detail; only the layout changed from the old two-line card.
+//
+// A literal's "resolved value" is just its own name — describeOperand(Literal "RED") already
+// prints "RED", so appending its value too would print "RED RED". Checked on the operand's own
+// type, not evidence.kind: a never-evaluated rule's evidence is always Kind "unresolved" even for
+// a literal (NotEvaluated skips resolving anything), which would otherwise show a "—" placeholder
+// implying a literal is missing data it was never going to need in the first place.
+function spineCompareHtml(rule, left, right) {
+  const val = (operand, ev) => {
+    if (!operand || operand.type === "Literal") return "";
+    return ev && ev.display ? `<span class="spine-val">${esc(ev.display)}</span>` : `<span class="spine-val none">—</span>`;
+  };
+  return `${describeOperand(rule.leftOperand)} ${val(rule.leftOperand, left)} <b>${esc(rule.operator || "")}</b> ${val(rule.rightOperand, right)} ${describeOperand(rule.rightOperand)}`;
 }
 
 // Reads the ATR off whichever side carries it (only Supertrend does). ATR is the one real
@@ -1200,23 +1183,31 @@ function atrFrom(...evidences) {
   return null;
 }
 
-// The distance-to-flipping readout. Only drawn when both sides genuinely resolved to numbers —
-// a text comparison (Supertrend == GREEN) has no meaningful "gap", and an unresolved side has no
-// number at all.
-function ruleGapHtml(ev) {
+// The distance-to-flipping phrase — "passing by 67.17", "12.40 away from passing" — shared by the
+// spine node detail line and the compact Gates Cleared checklist summary. Text only; ruleGapHtml
+// below adds the ATR bar on top of this for the spine's own detail line.
+function ruleGapPhrase(ev) {
   const l = ev.left && ev.left.numeric, r = ev.right && ev.right.numeric;
-  if (typeof l !== "number" || typeof r !== "number") return "";
+  if (typeof l !== "number" || typeof r !== "number") return null;
 
   const delta = Math.abs(l - r);
   const fmt = delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const op = (ev.rule.operator || "").trim();
   const equality = op === "==" || op === "!=";
 
-  let phrase;
-  if (ev.status === "pass") phrase = equality ? (delta === 0 ? "exactly equal" : `${fmt} apart`) : `passing by ${fmt}`;
-  else if (ev.status === "fail") phrase = equality ? `${fmt} apart` : `${fmt} away from passing`;
-  else phrase = `${fmt} apart`;
+  if (ev.status === "pass") return equality ? (delta === 0 ? "exactly equal" : `${fmt} apart`) : `passing by ${fmt}`;
+  if (ev.status === "fail") return equality ? `${fmt} apart` : `${fmt} away from passing`;
+  return `${fmt} apart`;
+}
 
+// Only drawn when both sides genuinely resolved to numbers — a text comparison
+// (Supertrend == GREEN) has no meaningful "gap", and an unresolved side has no number at all.
+function ruleGapHtml(ev) {
+  const phrase = ruleGapPhrase(ev);
+  if (phrase == null) return "";
+
+  const delta = Math.abs(ev.left.numeric - ev.right.numeric);
+  const fmt = delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const atr = atrFrom(ev.left, ev.right);
   let track = "";
   if (atr) {
@@ -1229,349 +1220,279 @@ function ruleGapHtml(ev) {
       <span class="gap-scale">${multiples.toFixed(2)}× ATR</span>`;
   }
 
-  return `<div class="rule-gap"><span class="gap-delta ${ev.status}">Δ ${fmt}</span><span class="gap-phrase">${esc(phrase)}</span>${track}</div>`;
+  return `<span class="gap-delta ${ev.status}">Δ ${fmt}</span><span class="gap-phrase">${esc(phrase)}</span>${track}`;
 }
 
-// Provenance for one side. Deliberately distinguishes "this is part of the rule, not live data"
-// (a literal) from "we looked here and found nothing" (unresolved with a source) from "there is
-// nowhere to look yet" (unresolved without one) — those are three different answers to "why".
-function evidenceSideHtml(label, operand, evidence) {
-  if (!evidence) return "";
-
-  const rows = (evidence.fields || []).map(f =>
-    `<div class="ev-field"><span class="ev-k">${esc(f.key)}</span><span class="ev-v">${esc(f.value)}</span></div>`
-  ).join("");
-
-  let source;
-  if (evidence.kind === "literal") source = `<div class="ev-source lit">from the rule definition — not live data</div>`;
-  else if (evidence.source) {
-    const prefix = evidence.kind === "unresolved" ? "looked in" : "redis";
-    source = `<div class="ev-source"><span class="ev-k">${prefix}</span><code>${esc(evidence.source)}</code></div>`;
-  } else source = `<div class="ev-source none">no source in this stack yet</div>`;
-
-  return `
-    <div class="ev-col">
-      <div class="ev-head">${esc(label)} · ${describeOperand(operand)}</div>
-      ${source}
-      ${evidence.asOf ? `<div class="ev-asof">as of ${esc(evidence.asOf)}</div>` : ""}
-      ${rows ? `<div class="ev-fields">${rows}</div>` : ""}
-    </div>`;
+// "2026-08-10T15:25:00" -> "15:25". Only ever the time-of-day part shown, never a fabricated
+// "flipped at" moment this stack has no way to actually detect (only the current running state
+// is kept, not a change history) — this is honestly "the bar this value is as of", not "when it
+// last changed".
+function formatAsOf(raw) {
+  const m = /T(\d{2}:\d{2})/.exec(raw || "");
+  return m ? m[1] : (raw || "");
 }
 
-// No drawer at all when neither side has anything to show — the never-evaluated Exit/Risk rules
-// keep exactly the shape they had before, rather than gaining an affordance that opens onto
-// nothing.
-function hasEvidence(ev) {
-  const any = e => e && (e.kind !== "unresolved" || e.source || (e.fields || []).length);
-  return !!(any(ev.left) || any(ev.right));
-}
-
-function ruleEvalRowHtml(ev, key) {
-  const tag = ev.status === "unknown" && ev.reason
-    ? `<span class="unwired-tag" title="${esc(ev.reason)}">${esc(ev.reason.length > 34 ? ev.reason.slice(0, 34) + "…" : ev.reason)}</span>`
-    : `<span class="badge status-${ev.status}">${RULE_STATUS_LABELS[ev.status] || ev.status}</span>`;
-
-  // A rule with nothing behind either side (the never-evaluated Risk Management and Exit branches)
-  // keeps the compact one-line form it always had. Giving it the resolved-value anatomy would mean
-  // a "—" under every operand — three lines of blank where there used to be one line of rule, and
-  // a static preview column taller than the live one beside it. The new layout is for rules that
-  // have something to show; these have exactly as much to say as they did before.
-  // Every row carries its inputs, including the never-evaluated ones — a dead branch reading a
-  // live input is precisely the relationship the source rail exists to show.
-  const sources = `data-sources="${esc((ev.sourceIds || []).join(" "))}"`;
-
-  if (!hasEvidence(ev)) {
-    return `
-      <div class="eval-row ${ev.status} compact" data-rule-key="${esc(key)}" ${sources}>
-        <div class="eval-main">
-          <span class="rule-text">${describeRule(ev.rule)}</span>
-          ${tag}
-        </div>
-      </div>`;
+// One line under a spine node: the numeric gap+bar for a numeric comparison, an honest
+// as-of-timestamped match/no-match for a text one (Supertrend color vs a Literal), or the
+// unresolved reason when there's nothing to compare at all.
+function spineDetailHtml(ev) {
+  if (ev.status === "unknown") {
+    return `<div class="spine-detail muted">${esc(ev.reason || "not evaluated")}</div>`;
   }
 
-  const open = ruleEngineOpenRows.has(key);
-  const drawer = `<button class="evidence-toggle" data-rule-key="${esc(key)}" aria-expanded="${open}" title="Where these values came from">▾</button>`;
+  const gap = ruleGapHtml(ev);
+  if (gap) return `<div class="spine-detail">${gap}</div>`;
 
+  const asOf = (ev.left && ev.left.asOf) || (ev.right && ev.right.asOf);
+  const phrase = ev.status === "pass" ? "Matched exactly" : "Did not match";
+  return `<div class="spine-detail">${esc(phrase)}${asOf ? ` · as of ${esc(formatAsOf(asOf))}` : ""}</div>`;
+}
+
+function spineNodeHtml(ev, key) {
   return `
-    <div class="eval-row ${ev.status}" data-rule-key="${esc(key)}" ${sources}>
-      <div class="eval-main">
-        <div class="rule-compare">
-          ${operandSideHtml(ev.rule.leftOperand, ev.left, "left")}
-          <div class="cmp-op ${ev.status}">${esc(ev.rule.operator || "")}</div>
-          ${operandSideHtml(ev.rule.rightOperand, ev.right, "right")}
+    <div class="spine-node ${ev.status}" data-rule-key="${esc(key)}">
+      <span class="spine-dot ${ev.status}"></span>
+      <div class="spine-body">
+        <div class="spine-head">
+          <span class="spine-text">${spineCompareHtml(ev.rule, ev.left, ev.right)}</span>
+          <span class="badge status-${ev.status}">${RULE_STATUS_LABELS[ev.status] || ev.status}</span>
         </div>
-        <div class="eval-end">
-          ${ev.rule.link ? `<span class="rule-link-tag">${esc(ev.rule.link)}</span>` : ""}
-          ${tag}
-          ${drawer}
-        </div>
-      </div>
-      ${ruleGapHtml(ev)}
-      <div class="evidence" ${open ? "" : "hidden"}>
-        ${evidenceSideHtml("Left", ev.rule.leftOperand, ev.left)}
-        ${evidenceSideHtml("Right", ev.rule.rightOperand, ev.right)}
+        ${spineDetailHtml(ev)}
       </div>
     </div>`;
 }
 
-function ruleGroupBodyHtml(group, scope) {
-  if (!group.rules.length) return `<div class="hint" style="margin-top:8px">No rules defined.</div>`;
-  return `<div class="rule-list">${group.rules.map((ev, i) => ruleEvalRowHtml(ev, `${scope}:${ev.rule.sequence ?? i}`)).join("")}</div>`;
+// items: [{ev, linkAfter}] — linkAfter is the label ("AND"/"OR"/"THEN") drawn between this node
+// and the next, or null after the last one. "THEN" marks a transition between two semantically
+// different groups chained on one spine (Entry rules -> Risk sizing, see focusPanelHtml) rather
+// than the rule's own Link, which only ever means AND/OR within a single group.
+function spineFromItemsHtml(items) {
+  if (!items.length) return `<div class="hint">No rules defined.</div>`;
+  return `<div class="spine">${items.map((item, i) => {
+    const node = spineNodeHtml(item.ev, item.key ?? i);
+    const link = item.linkAfter ? `<div class="spine-link">${esc(item.linkAfter)}</div>` : "";
+    return node + link;
+  }).join("")}</div>`;
 }
 
-function entryExitColumnHtml(label, labelClass, entryExit, side) {
+function chainWithLinks(rules, scope, fallbackLink, trailingLink) {
+  return rules.map((ev, i) => ({
+    ev,
+    key: `${scope}:${ev.rule.sequence ?? i}`,
+    linkAfter: i < rules.length - 1 ? ((ev.rule.link || "").trim().toUpperCase() || fallbackLink) : (trailingLink || null),
+  }));
+}
+
+// The Entry lens shows more than just Entry Rules: whether an armed entry can actually be SIZED
+// (Risk Management) is part of "would this trade happen", not a separate question, so the two
+// groups chain on one spine with a "THEN" transition rather than living in different tabs.
+function combinedSpineForEntry(entryExit, side) {
+  const entry = chainWithLinks(entryExit.entryRules.rules, `${side}:entry`, "AND",
+    entryExit.riskManagementRules.rules.length ? "THEN" : null);
+  const risk = chainWithLinks(entryExit.riskManagementRules.rules, `${side}:risk`, "AND", null);
+  return entry.concat(risk);
+}
+
+const TAB_LABELS = { entry: "Entry", exit: "Exit", risk: "Risk" };
+
+function focusItemsFor(entryExit, side, tab) {
+  if (tab === "entry") return { items: combinedSpineForEntry(entryExit, side), group: entryExit.entryRules };
+  if (tab === "risk") return { items: chainWithLinks(entryExit.riskManagementRules.rules, `${side}:risk`, "AND", null), group: entryExit.riskManagementRules };
+  return { items: chainWithLinks(entryExit.exitBranch.rules, `${side}:exit`, "OR", null), group: entryExit.exitBranch };
+}
+
+// "N of M met" only ever counts rules that actually resolved to pass/fail — an unknown rule
+// (Risk Management, always unevaluated) isn't a miss, it's a question this stack can't answer yet,
+// so it's shown on the spine but left out of the ratio entirely rather than counted against it.
+function metPillHtml(group) {
+  if (!group.live) return `<span class="met-pill unknown">Not evaluated</span>`;
+
+  const evaluated = group.rules.filter(r => r.status === "pass" || r.status === "fail");
+  if (!evaluated.length) return `<span class="met-pill unknown">No rules to evaluate</span>`;
+
+  const met = evaluated.filter(r => r.status === "pass").length;
+  const dots = evaluated.map(r => `<span class="met-dot ${r.status}"></span>`).join("");
+  return `<span class="met-pill"><span class="met-dots">${dots}</span>${met} of ${evaluated.length} met</span>`;
+}
+
+function sideDotTone(entryExit) {
+  const s = entryExit && entryExit.entryRules && entryExit.entryRules.status;
+  return s === "pass" ? "pass" : s === "fail" ? "fail" : "unknown";
+}
+
+function sideToggleHtml(data, side) {
   return `
-    <div class="fork-col">
-      <div class="fork-label ${labelClass}">${esc(label)}</div>
-      <div class="rule-node ${entryExit.entryRules.live ? "" : "placeholder-node"}">
-        <div class="node-head">
-          <div class="node-title">${esc(entryExit.entryRules.title)}</div>
-          <span class="badge status-${entryExit.entryRules.status}">${RULE_STATUS_LABELS[entryExit.entryRules.status] || entryExit.entryRules.status}</span>
-        </div>
-        ${ruleGroupBodyHtml(entryExit.entryRules, `${side}:entry`)}
-        <div class="node-eyebrow" style="margin-top:14px">${esc(entryExit.riskManagementRules.title)}</div>
-        ${ruleGroupBodyHtml(entryExit.riskManagementRules, `${side}:risk`)}
+    <div class="side-toggle" role="tablist">
+      <button type="button" class="side-toggle-btn ${side === "long" ? "active" : ""}" data-side="long">
+        <span class="side-dot ${sideDotTone(data.long)}"></span>Long
+      </button>
+      <button type="button" class="side-toggle-btn ${side === "short" ? "active" : ""}" data-side="short">
+        <span class="side-dot ${sideDotTone(data.short)}"></span>Short
+      </button>
+    </div>`;
+}
+
+function tabToggleHtml(tab) {
+  return `
+    <div class="tab-toggle" role="tablist">
+      ${Object.entries(TAB_LABELS).map(([key, label]) =>
+        `<button type="button" class="tab-toggle-btn ${tab === key ? "active" : ""}" data-tab="${key}">${label}</button>`
+      ).join("")}
+    </div>`;
+}
+
+// The other half of what's on screen: not "would this pass" but "is any of it real right now".
+// Scoped to only the inputs the currently-visible spine actually reads — the full inventory (every
+// input across every side/lens) lived in the old source rail; this is deliberately just what's in
+// front of you, since that's the question a compact strip at the bottom of one view can answer.
+function readsStripHtml(sources, items) {
+  const ids = new Set();
+  items.forEach(item => (item.ev.sourceIds || []).forEach(id => ids.add(id)));
+  const list = (sources || []).filter(s => ids.has(s.id));
+  if (!list.length) return "";
+
+  return `
+    <div class="reads-strip">
+      <div class="reads-label">Reads</div>
+      <div class="reads-list">
+        ${list.map(s => `
+          <div class="read-tile">
+            <div class="read-label">${esc(s.label)}</div>
+            <div class="read-value ${s.backed ? "" : "none"}">${s.backed ? esc(s.value) : "no source"}</div>
+          </div>`).join("")}
       </div>
     </div>`;
 }
 
-function exitColumnHtml(entryExit, side) {
+function focusPanelHtml(data, side, tab) {
+  const entryExit = data[side];
+  const { items, group } = focusItemsFor(entryExit, side, tab);
+
   return `
-    <div class="fork-col">
-      <div class="fork-label dim">○ In position — static preview</div>
-      <div class="rule-node placeholder-node">
-        <div class="node-head">
-          <div class="node-title">${esc(entryExit.exitBranch.title)}</div>
-          <span class="badge unknown">Not evaluated</span>
-        </div>
-        ${ruleGroupBodyHtml(entryExit.exitBranch, `${side}:exit`)}
-        <div class="node-detail" style="margin-top:10px">Same rule tree, drawn for reference — never actually evaluates until the position gate above has something real to check.</div>
+    <div class="focus-toolbar">
+      ${sideToggleHtml(data, side)}
+      ${tabToggleHtml(tab)}
+      ${metPillHtml(group)}
+    </div>
+    ${spineFromItemsHtml(items)}
+    ${readsStripHtml(data.sources, items)}`;
+}
+
+function gateChecklistIcon(tone) {
+  if (tone === "pass") return `<span class="gate-icon pass">✓</span>`;
+  if (tone === "fail") return `<span class="gate-icon fail">✕</span>`;
+  if (tone === "pointer") return `<span class="gate-icon pointer">↓</span>`;
+  return `<span class="gate-icon unknown">?</span>`;
+}
+
+function gateChecklistItemHtml(label, detail, tone) {
+  return `
+    <div class="gate-check-item">
+      ${gateChecklistIcon(tone)}
+      <div>
+        <div class="gate-check-label">${esc(label)}</div>
+        <div class="gate-check-detail">${esc(detail)}</div>
       </div>
     </div>`;
 }
 
-/* ── Source rail ──────────────────────────────────────────────────────────
-   The other half of the page: the rules say what would be decided, the rail says what the engine
-   is actually looking at and whether any of it is real. An input with no source is drawn dashed
-   and valueless but still counts the rules depending on it — the Position card feeding a whole
-   dead Exit branch is the clearest single statement of what this stack can and can't do yet. */
-
-function sourceCardHtml(src) {
-  const value = src.backed
-    ? `<div class="src-value">${esc(src.value)}</div>`
-    : `<div class="src-value none">no value</div>`;
-
-  return `
-    <button type="button" class="source-card ${src.backed ? "backed" : "unbacked"}" data-source-id="${esc(src.id)}"
-            title="${esc(src.key || src.detail || "")}">
-      <div class="src-head">
-        <span class="src-label">${esc(src.label)}</span>
-        <span class="src-feeds" title="rules and gates reading this">${src.feedsRules}</span>
-      </div>
-      ${src.scope ? `<div class="src-scope">${esc(src.scope)}</div>` : ""}
-      ${value}
-      ${src.detail ? `<div class="src-detail">${esc(src.detail)}</div>` : ""}
-      ${src.asOf ? `<div class="src-asof">${esc(src.asOf)}</div>` : ""}
-    </button>`;
-}
-
-function sourceRailHtml(sources) {
+function dataHealthHtml(sources) {
   const list = sources || [];
   const backed = list.filter(s => s.backed).length;
+  const total = list.length;
+  const unbacked = total - backed;
+  const pct = total ? (backed / total) * 100 : 0;
 
   return `
-    <aside class="source-rail">
-      <div class="rail-head">
-        <div class="rail-title">Live inputs</div>
-        <div class="rail-count">${backed} of ${list.length} backed</div>
+    <div class="data-health">
+      <div class="health-head">
+        <span class="health-title">Data health</span>
+        <span class="health-count">${backed}/${total}</span>
       </div>
-      <div class="source-list">${list.map(sourceCardHtml).join("")}</div>
-      <div class="rail-note">Hover an input to see which rules read it. Click to pin.</div>
-    </aside>`;
+      <div class="health-bar"><div class="health-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="health-caption">${unbacked} input${unbacked === 1 ? "" : "s"} have no writer. Exit and risk rules can't evaluate until they do.</div>
+    </div>`;
 }
 
-function ruleEngineFlowHtml(data) {
-  const sideBlock = (label, entryExit, side) => `
-    <div class="rule-side">
-      <div class="rule-side-label">${esc(label)}</div>
-      <div class="fork">
-        ${entryExitColumnHtml("● Not in position — live", "live", entryExit, side)}
-        ${exitColumnHtml(entryExit, side)}
-      </div>
-    </div>`;
+// The trading-session-rules gate's compact summary — reuses the same gap phrase the spine uses,
+// so "passing by 113.89" means the same thing whether you're reading it in the checklist or the
+// full rule row. Only handles the shapes this stack's strategies actually have (0 or 1 session
+// rule); a strategy with several would just fall back to a plain status word, honestly.
+function tradingSessionSummary(group) {
+  if (!group.rules.length) return "No session rules configured";
+  if (group.rules.length > 1) return `${group.rules.length} rules · ${RULE_STATUS_LABELS[group.status] || group.status}`;
+  const ev = group.rules[0];
+  if (ev.status === "unknown") return ev.reason || "not evaluated";
+  return ruleGapPhrase(ev) || (ev.status === "pass" ? "Matched" : "Did not match");
+}
+
+function ruleEngineFocusHtml(data, sessionGate, side, tab) {
+  const sessionState = (sessionGate.values && sessionGate.values[0] && sessionGate.values[0].value) || "—";
+  const sessionDetail = sessionGate.status === "pass" ? `${sessionState} · gated open`
+    : sessionGate.status === "fail" ? `${sessionState} — no session today`
+    : "session state unavailable";
 
   return `
     <div class="identity">
       <div class="identity-name">${esc(data.strategyName)}</div>
-      <div class="identity-meta">${esc((data.instruments || []).join(", "))}${data.exchange ? " · " + esc(data.exchange) : ""}</div>
+      <div class="identity-meta">${esc((data.instruments || []).join(", "))}${data.exchange ? " · " + esc(data.exchange) : ""}${data.deployedVersion ? " · v" + esc(data.deployedVersion) : ""}</div>
     </div>
 
-    <div class="rule-workspace">
-      <svg class="link-layer" aria-hidden="true"></svg>
-      ${sourceRailHtml(data.sources)}
-      <div class="rule-tree">
-    <div class="flow">
-      <div class="rule-node ${data.tradingSessionRules.status}">
-        <div class="node-head">
-          <div>
-            <div class="node-eyebrow">Gate 1 · Trading Session Rules</div>
-            <div class="node-title">${esc(data.tradingSessionRules.title)}</div>
-          </div>
-          <span class="badge status-${data.tradingSessionRules.status}">${RULE_STATUS_LABELS[data.tradingSessionRules.status] || data.tradingSessionRules.status}</span>
+    <div class="focus-layout">
+      <aside class="gates-rail">
+        <div class="gates-rail-title">Gates cleared</div>
+        <div class="gates-list">
+          ${gateChecklistItemHtml("Session today", sessionDetail, sessionGate.status)}
+          ${gateChecklistItemHtml("Trading session rules", tradingSessionSummary(data.tradingSessionRules), data.tradingSessionRules.status)}
+          ${gateChecklistItemHtml("In a position", "Nothing tracks this — assumed flat", data.positionGate.status)}
+          ${gateChecklistItemHtml(`${side === "long" ? "Long" : "Short"} branch`, `${TAB_LABELS[tab]} rules evaluating`, "pointer")}
         </div>
-        ${ruleGroupBodyHtml(data.tradingSessionRules, "session")}
-      </div>
-      <div class="connector ${data.tradingSessionRules.status}"></div>
-      ${gateNodeHtml(data.positionGate, "placeholder-node")}
-      <div class="connector"></div>
-    </div>
+        ${dataHealthHtml(data.sources)}
+      </aside>
 
-    ${sideBlock("Long", data.long, "long")}
-    ${sideBlock("Short", data.short, "short")}
+      <div class="focus-main">
+        ${focusPanelHtml(data, side, tab)}
+      </div>
+    </div>
 
     <div class="legend">
       <span><span class="dot pass"></span>Pass — a real live value satisfied the condition</span>
       <span><span class="dot fail"></span>Fail — a real live value did not satisfy it</span>
-      <span><span class="dot unknown"></span>Unknown — no data source exists for this yet</span>
-      <span><span class="dot neutral"></span>▾ opens the exact Redis key and raw fields the value came from</span>
-    </div>
-      </div>
+      <span><span class="dot unknown"></span>Can't evaluate — no data source exists for this yet</span>
+      <span>The spine is the AND chain — read it top to bottom</span>
     </div>
   `;
 }
 
-/* ── Source ↔ rule linking ───────────────────────────────────────────────
-   Hovering either side highlights the other and draws the connection. Pinning (click) exists
-   because hovering can't survive scrolling, and the tree is far taller than a viewport — without
-   it you could never actually follow a source down to the rules at the bottom. */
+// Which side/lens is on screen — module-level, like the strategy selection below, so a toggle
+// click survives the 5s poll and a re-render can happen instantly from cached data with no
+// network round-trip (renderRuleEngineContent below).
+let ruleEngineSide = "long";
+let ruleEngineTab = "entry";
+let ruleEngineLastData = null;
+let ruleEngineLastSessionGate = null;
 
-let ruleEnginePinnedSource = null;
-let ruleEngineLinkFrame = null;
-
-// Curves from each linked input to each rule that reads it. Only to rows currently on screen — a
-// bezier to something 3000px below is noise, not information, and the highlight already carries
-// the relationship for everything off-screen.
-function drawSourceLinks(ids) {
-  const wrap = document.querySelector(".rule-workspace");
-  const svg = wrap && wrap.querySelector(".link-layer");
-  if (!svg) return;
-
-  const base = wrap.getBoundingClientRect();
-  svg.setAttribute("viewBox", `0 0 ${base.width} ${base.height}`);
-  svg.style.width = `${base.width}px`;
-  svg.style.height = `${base.height}px`;
-
-  if (!ids || !ids.length) { svg.innerHTML = ""; return; }
-
-  const paths = [];
-  for (const id of ids) {
-    const card = wrap.querySelector(`.source-card[data-source-id="${id}"]`);
-    if (!card) continue;
-
-    const c = card.getBoundingClientRect();
-    const x1 = c.right - base.left;
-    const y1 = c.top + c.height / 2 - base.top;
-    let drewAny = false;
-
-    for (const row of wrap.querySelectorAll(`[data-sources~="${id}"]`)) {
-      const r = row.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > window.innerHeight) continue;
-
-      const x2 = r.left - base.left;
-      const y2 = r.top + Math.min(r.height / 2, 22) - base.top;
-      const bend = Math.max(18, (x2 - x1) * 0.55);
-      paths.push(
-        `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1 + bend).toFixed(1)},${y1.toFixed(1)} ${(x2 - bend).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}"/>` +
-        `<circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="2.5"/>`);
-      drewAny = true;
-    }
-
-    // Only once, and only if something was actually reached — a dot on the card with no line
-    // leaving it would suggest a connection that isn't being drawn.
-    if (drewAny) paths.push(`<circle cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3"/>`);
-  }
-
-  svg.innerHTML = paths.join("");
+function renderRuleEngineContent() {
+  if (!ruleEngineLastData || !ruleEngineLastSessionGate) return;
+  document.getElementById("rule-engine-content").innerHTML =
+    ruleEngineFocusHtml(ruleEngineLastData, ruleEngineLastSessionGate, ruleEngineSide, ruleEngineTab);
 }
 
-function applySourceLink(ids) {
-  const wrap = document.querySelector(".rule-workspace");
-  if (!wrap) return;
-
-  wrap.querySelectorAll(".linked").forEach(el => el.classList.remove("linked"));
-
-  if (!ids || !ids.length) {
-    wrap.classList.remove("linking");
-    drawSourceLinks(null);
+// Toggle clicks are delegated off the page container so they survive the 5s refresh replacing
+// the DOM underneath them — bound once at load, same contract as the strategy switcher below.
+document.getElementById("rule-engine-content").addEventListener("click", ev => {
+  const sideBtn = ev.target.closest(".side-toggle-btn");
+  if (sideBtn && sideBtn.dataset.side !== ruleEngineSide) {
+    ruleEngineSide = sideBtn.dataset.side;
+    renderRuleEngineContent();
     return;
   }
 
-  wrap.classList.add("linking");
-  for (const id of ids) {
-    wrap.querySelectorAll(`.source-card[data-source-id="${id}"], [data-sources~="${id}"]`)
-      .forEach(el => el.classList.add("linked"));
+  const tabBtn = ev.target.closest(".tab-toggle-btn");
+  if (tabBtn && tabBtn.dataset.tab !== ruleEngineTab) {
+    ruleEngineTab = tabBtn.dataset.tab;
+    renderRuleEngineContent();
   }
-  drawSourceLinks(ids);
-}
-
-function ruleEngineHoverLink(ids) {
-  if (ruleEnginePinnedSource) return; // a pin owns the highlight until it's cleared
-  applySourceLink(ids);
-}
-
-(function wireSourceLinking() {
-  const root = document.getElementById("rule-engine-content");
-
-  // One bubbling mouseover rather than enter/leave pairs: moving between a row and the small
-  // elements inside it would otherwise fire a leave-then-enter and flicker the whole highlight.
-  // Landing on anything that isn't a card or a rule with inputs clears it.
-  root.addEventListener("mouseover", ev => {
-    const card = ev.target.closest(".source-card");
-    if (card) return ruleEngineHoverLink([card.dataset.sourceId]);
-
-    const consumer = ev.target.closest("[data-sources]");
-    const ids = consumer ? (consumer.dataset.sources || "").split(" ").filter(Boolean) : [];
-    ruleEngineHoverLink(ids.length ? ids : null);
-  });
-
-  root.addEventListener("mouseleave", () => ruleEngineHoverLink(null));
-
-  root.addEventListener("click", ev => {
-    const card = ev.target.closest(".source-card");
-    if (!card) return;
-
-    const id = card.dataset.sourceId;
-    ruleEnginePinnedSource = ruleEnginePinnedSource === id ? null : id;
-    applySourceLink(ruleEnginePinnedSource ? [ruleEnginePinnedSource] : null);
-  });
-
-  // A pinned link has to keep pointing at the right rows while you scroll to find them — that's
-  // the entire reason pinning exists. rAF-throttled so it costs one recompute per frame at most.
-  window.addEventListener("scroll", () => {
-    if (!ruleEnginePinnedSource || ruleEngineLinkFrame) return;
-    ruleEngineLinkFrame = requestAnimationFrame(() => {
-      ruleEngineLinkFrame = null;
-      drawSourceLinks([ruleEnginePinnedSource]);
-    });
-  }, { passive: true });
-})();
-
-// Evidence drawers are toggled by delegation off the page container, so the handler survives the
-// re-render — binding per button would leave dead listeners on every refresh that replaces them.
-document.getElementById("rule-engine-content").addEventListener("click", ev => {
-  const btn = ev.target.closest(".evidence-toggle");
-  if (!btn) return;
-
-  const key = btn.dataset.ruleKey;
-  const row = btn.closest(".eval-row");
-  const drawer = row && row.querySelector(".evidence");
-  if (!drawer) return;
-
-  const open = drawer.hidden;
-  drawer.hidden = !open;
-  btn.setAttribute("aria-expanded", String(open));
-  if (open) ruleEngineOpenRows.add(key); else ruleEngineOpenRows.delete(key);
 });
 
 // Which deployed strategy's tree is on screen — module-level so it survives the 5s poll cycle
@@ -1580,7 +1501,6 @@ document.getElementById("rule-engine-content").addEventListener("click", ev => {
 // strategy disappears (undeployed/deleted), loadRuleEngine falls back to the first one available.
 let ruleEngineSelectedId = null;
 let ruleEngineSwitcherPayload = null;
-let ruleEngineSessionPayload = null;
 
 function strategySwitcherHtml(deployedStrategies, selectedId) {
   if (deployedStrategies.length < 2) return ""; // one deployed strategy: a switcher has nothing to switch between
@@ -1596,7 +1516,6 @@ async function loadRuleEngine() {
   const el = document.getElementById("rule-engine-content");
   const errEl = document.getElementById("rule-engine-error");
   const switcherEl = document.getElementById("rule-engine-switcher");
-  const sessionEl = document.getElementById("rule-engine-session");
   try {
     // Fetched together — the session gate is the same Redis "India" state no matter which
     // strategy ends up selected, so it doesn't wait on (or depend on) strategy selection at all.
@@ -1609,24 +1528,14 @@ async function loadRuleEngine() {
     if (deployed.length === 0) {
       el.innerHTML = `<div class="hint">No deployed strategy yet — deploy one from the Strategy page first.</div>`;
       ruleEngineLastPayload = null;
+      ruleEngineLastData = null;
+      ruleEngineLastSessionGate = null;
       switcherEl.hidden = true;
       switcherEl.innerHTML = "";
       ruleEngineSwitcherPayload = null;
       ruleEngineSelectedId = null;
-      sessionEl.hidden = true;
-      sessionEl.innerHTML = "";
-      ruleEngineSessionPayload = null;
       errEl.hidden = true;
       return;
-    }
-
-    // Shared across every deployed strategy, so it's rendered once, above the switcher, instead
-    // of once per strategy the way it used to be duplicated as each strategy's own "Gate 2".
-    const sessionPayload = JSON.stringify(sessionGate);
-    if (sessionPayload !== ruleEngineSessionPayload) {
-      ruleEngineSessionPayload = sessionPayload;
-      sessionEl.innerHTML = `${gateNodeHtml(sessionGate)}<div class="connector ${sessionGate.status}"></div>`;
-      sessionEl.hidden = false;
     }
 
     // Stick with whatever the user picked as long as it's still deployed; otherwise (first load,
@@ -1645,19 +1554,16 @@ async function loadRuleEngine() {
     const status = await fetchJson(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(ruleEngineSelectedId)}/rule-status`);
 
     // The 5s refresh used to blow away and rebuild this whole subtree every tick, which made any
-    // interaction on the page impossible to sustain — an open drawer, a text selection, even a
-    // hover would survive at most five seconds. Indicators only actually change on a bar close
-    // (5 minutes for this strategy), so the overwhelming majority of ticks are identical payloads
-    // and now touch the DOM not at all. When something genuinely did change, the rebuild reopens
-    // whatever drawers were open via ruleEngineOpenRows.
-    const payload = JSON.stringify(status);
+    // interaction on the page impossible to sustain — a side/tab selection would otherwise reset
+    // every five seconds. Indicators only actually change on a bar close (5 minutes for this
+    // strategy), so the overwhelming majority of ticks are identical payloads and now touch the
+    // DOM not at all.
+    const payload = JSON.stringify({ status, sessionGate });
     if (payload !== ruleEngineLastPayload) {
       ruleEngineLastPayload = payload;
-      el.innerHTML = ruleEngineFlowHtml(status);
-      // Same contract as the drawers: a rebuild restores what the user had going, it doesn't
-      // reset them. A pin dropped on every bar close would make the rail unusable for exactly
-      // the tracing it exists for.
-      if (ruleEnginePinnedSource) applySourceLink([ruleEnginePinnedSource]);
+      ruleEngineLastData = status;
+      ruleEngineLastSessionGate = sessionGate;
+      renderRuleEngineContent();
     }
     errEl.hidden = true;
   } catch (err) {
@@ -1666,14 +1572,13 @@ async function loadRuleEngine() {
   }
 }
 
-// Delegated the same way the evidence drawers are (see below) — bound once at load, survives the
-// switcher being re-rendered on every strategy list change.
+// Delegated the same way the toggle clicks are — bound once at load, survives the switcher being
+// re-rendered on every strategy list change.
 document.getElementById("rule-engine-switcher").addEventListener("click", ev => {
   const chip = ev.target.closest(".strategy-chip");
   if (!chip || chip.classList.contains("active")) return;
 
   ruleEngineSelectedId = chip.dataset.strategyId;
-  ruleEnginePinnedSource = null; // a pin from the previous strategy's tree means nothing here
   ruleEngineLastPayload = null; // force the flow to redraw even if the new strategy's status JSON
                                  // happens to collide with whatever was cached from the last one
   loadRuleEngine();

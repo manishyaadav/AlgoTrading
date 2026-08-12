@@ -1284,132 +1284,30 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .storage-pill.bad .storage-dot { background: var(--red); }
 
 
-/* --- Rule Engine page ---
-   Reuses the app's shared card shell (.surface/.border look, .badge, .rule-link-tag from the
-   Strategy page's read-only rule view) rather than inventing new primitives — only what's genuinely
-   new gets new classes: the vertical connector spine, the headline value/eyebrow layout, the
-   entry/exit fork, and the cold-start seed bar. See design-system/algotrading-dashboard/pages/
-   rule-engine.md. */
+/* --- Rule Engine page: "Focus" ---
+   A single-branch redesign: pick Long/Short and Entry/Exit/Risk, see just that chain. Replaces an
+   earlier show-everything-at-once version (still described, for the record, in
+   design-system/algotrading-dashboard/pages/rule-engine.md's history) that had every gate, both
+   sides, and an interactive source rail with per-rule evidence drawers all on screen together —
+   that traded glanceability for completeness; this trades completeness for focus. Reuses the
+   app's shared card shell (.surface/.border, .badge) rather than inventing new primitives. */
 
-/* Two columns: what the engine reads, and what it decides. The rail is sticky because the tree is
-   several viewports tall — an input list that scrolls away is useless for tracing a value down to
-   the rules that consume it. */
-/* The 44px gap is a connector channel, not decoration. At the 20px this started with, a curve
-   from a card to a rule 400px below had so little horizontal room that it rendered as a near-
-   vertical hairline hugging the column edge — indistinguishable from a border. Lines need room
-   across to read as lines. */
-.rule-workspace {
-  position: relative;
-  display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
-  gap: 44px;
-  align-items: start;
-}
-
-.link-layer {
-  position: absolute; inset: 0;
-  pointer-events: none;
-  z-index: 2;
-  overflow: visible;
-}
-.link-layer path {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  opacity: 0.8;
-}
-/* Endpoint dots — without them a stroke landing on a card edge reads as an overhanging line
-   rather than as something connecting to that specific row. */
-.link-layer circle { fill: var(--accent); opacity: 0.9; }
-
-.source-rail { position: sticky; top: 16px; }
-.rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-.rail-title {
-  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650;
-  font-size: 12px; letter-spacing: 0.02em;
-}
-.rail-count { font-size: 10.5px; color: var(--muted); }
-.rail-note { font-size: 10.5px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
-
-.source-list { display: flex; flex-direction: column; gap: 8px; }
-
-.source-card {
-  display: block; width: 100%; text-align: left; cursor: pointer;
+/* Just name + meta — no separate badge; the version renders inline in the meta line instead
+   (".v1.0.0" is enough weight for a fact that's also confirmable from the switcher chip above). */
+.identity {
   background: var(--surface);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 11px;
-  color: inherit; font: inherit;
-  transition: border-color var(--motion-fast), opacity var(--motion-fast);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
 }
-.source-card:hover { border-color: var(--line); }
-
-/* Dashed and valueless, the same treatment .placeholder-node already uses for the two gates this
-   page can't answer — an input with no feed is the same kind of honest nothing. */
-.source-card.unbacked { border-style: dashed; background: transparent; }
-.source-card.unbacked .src-label { color: var(--muted); }
-
-.src-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.src-label {
-  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 600;
-  font-size: 12px; line-height: 1.3;
-}
-.src-feeds {
-  flex-shrink: 0; font-size: 10px; color: var(--muted);
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: 999px; padding: 1px 6px;
-  font-variant-numeric: tabular-nums;
-}
-.src-scope { font-size: 10px; color: var(--muted); margin-top: 2px; }
-.src-value {
-  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-  font-size: 13px; margin-top: 6px;
-}
-.src-value.none { font-family: inherit; font-size: 10.5px; font-style: italic; color: var(--muted); margin-top: 4px; }
-.src-detail { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
-.src-asof {
-  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px; color: var(--muted); margin-top: 4px;
-}
-
-/* While a link is active everything unrelated recedes. Dimming rather than hiding: the shape of
-   the whole tree stays readable, so you can see *where* in it the highlighted rules sit. */
-.rule-workspace.linking .eval-row:not(.linked),
-.rule-workspace.linking .rule-node.gate:not(.linked),
-.rule-workspace.linking .source-card:not(.linked) { opacity: 0.25; }
-
-.rule-workspace.linking .linked.source-card,
-.rule-workspace.linking .linked.eval-row,
-.rule-workspace.linking .linked.rule-node {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-}
-.rule-workspace.linking .linked.eval-row { box-shadow: inset 2px 0 0 var(--accent); }
-
-/* Below this the rail + channel eat so much width that the fork columns stop being readable, and
-   a legible tree matters more than the connector lines. The rail becomes a grid of cards above the
-   tree — still the full inventory of what's backed and what isn't, just without the flow drawing. */
-@media (max-width: 1200px) {
-  .rule-workspace { grid-template-columns: 1fr; gap: 20px; }
-  .source-rail { position: static; }
-  .source-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
-  /* Curves computed for a side-by-side layout are meaningless once the rail sits above the tree.
-     Hover/pin still highlights both sides — only the drawing goes. */
-  .link-layer { display: none; }
-}
-
-/* The session/holiday gate, common to every deployed strategy — shown once, above the switcher,
-   rather than duplicated inside each strategy's own tree. Reuses .rule-node.gate/.connector as-is
-   (via gateNodeHtml), just needs the same bottom margin the switcher/identity blocks use so the
-   page reads as one stacked sequence rather than a gate floating with no relation to what's below. */
-.session-banner { margin-bottom: 16px; }
+.identity-name { font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650; font-size: 15px; }
+.identity-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
 /* Only rendered when 2+ strategies are deployed at once (loadRuleEngine hides/empties it
-   otherwise) — one deployed strategy has nothing to switch between, so the single-strategy case
-   stays exactly as it looked before this existed. Chips wrap rather than scroll: a handful of
-   deployed strategies is the expected scale, not a long list that needs its own scroller. */
+   otherwise) — one deployed strategy has nothing to switch between. Chips wrap rather than
+   scroll: a handful of deployed strategies is the expected scale. */
 .strategy-switcher {
   display: flex;
   flex-wrap: wrap;
@@ -1443,124 +1341,165 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 }
 .strategy-chip.active .chip-name { color: var(--accent); }
 .chip-meta { font-size: 11px; color: var(--muted); }
-
-/* Just name + meta now — the deployed-version badge that used to sit alongside them was dropped
-   (redundant: only deployed strategies ever reach this page, and the switcher chip above already
-   shows the version). Stacked, not a row, now that there's only one thing in here. */
-.identity {
-  background: var(--surface);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin-bottom: 20px;
-}
-.identity-name { font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650; font-size: 15px; }
-.identity-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .badge.deployed { background: var(--green-bg); color: var(--green); border-color: transparent; }
 
-/* Status vocabulary here is Pass/Fail/Unknown, not the Data page's On-Track/Behind/Pending — same
-   three semantic colors (green/red/muted), different words, since "a condition holds" and "data is
-   fresh" are different questions even when they share a palette. */
+/* Status vocabulary here is Pass/Fail/Can't evaluate, not the Data page's On-Track/Behind/Pending
+   — same three semantic colors (green/red/muted), different words, since "a condition holds" and
+   "data is fresh" are different questions even when they share a palette. */
 .badge.status-pass { background: var(--green-bg); color: var(--green); border-color: transparent; }
 .badge.status-fail { background: var(--red-bg); color: var(--red); border-color: transparent; }
 .badge.status-unknown, .badge.unknown { background: var(--bg); color: var(--muted); border-color: var(--border); }
 
-.flow { position: relative; margin-bottom: 8px; }
-
-.connector {
-  width: 2px; height: 22px; background: var(--line); margin: 0 auto;
-  position: relative;
+/* Fixed-width checklist rail + fluid main panel. Not sticky: the page is short enough now (one
+   branch, not the whole tree) that a sticky rail would just add scroll-jank for no reason — the
+   old version needed it because the tree ran several viewports tall; this one rarely does. */
+.focus-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
 }
-.connector::after {
-  content: ""; position: absolute; left: 50%; bottom: -1px; transform: translateX(-50%);
-  border: 5px solid transparent; border-top-color: var(--line); border-bottom: 0;
-}
-.connector.pass { background: var(--green); }
-.connector.pass::after { border-top-color: var(--green); }
-.connector.fail { background: var(--red); }
-.connector.fail::after { border-top-color: var(--red); }
 
-.rule-node {
+.gates-rail {
   background: var(--surface);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 16px 18px;
+  padding: 16px;
 }
-.rule-node.pass { border-color: color-mix(in srgb, var(--green) 35%, var(--border)); }
-.rule-node.fail { border-color: color-mix(in srgb, var(--red) 35%, var(--border)); }
-.rule-node.placeholder-node { border-style: dashed; background: transparent; }
-.rule-node.placeholder-node .node-title { color: var(--muted); }
-
-.node-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
-.node-title { font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 600; font-size: 13.5px; }
-.node-eyebrow { font-size: 10px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; margin-bottom: 3px; }
-.node-detail { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
-
-.node-values { display: flex; gap: 18px; margin-top: 10px; flex-wrap: wrap; }
-.value-chip { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-size: 12.5px; }
-.value-chip .k { color: var(--muted); margin-right: 6px; }
-.value-chip .v { color: var(--text); font-weight: 500; }
-.value-chip .v.pass { color: var(--green); }
-.value-chip .v.fail { color: var(--red); }
-
-.rule-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-
-/* Named .eval-row, NOT .rule-row: the Strategy page's rule *editor* already owns .rule-row (see
-   ~line 846), and this page's flat later-in-the-file redefinition was silently overriding it on
-   both pages. Two different components, two different names. */
-.eval-row {
-  padding: 8px 12px;
-  background: var(--panel-2);
-  border-radius: 8px;
-  font-size: 12.5px;
+.gates-rail-title {
+  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 12px;
 }
-.eval-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-/* The never-evaluated branches keep the original one-line row — see ruleEvalRowHtml(). */
-.eval-row.compact .rule-text { font-size: 12px; }
-.eval-end { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.unwired-tag { font-size: 10px; color: var(--muted); font-style: italic; white-space: nowrap; }
 
-/* The comparison itself: operand / operator / operand, with each side's live value directly under
-   the name it resolved from. Same 1fr auto 1fr shape the Strategy page's rule editor uses for the
-   same three parts, so a rule reads the same way whether you're writing it or watching it. */
-.rule-compare { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; flex: 1; min-width: 0; }
-.cmp-side { min-width: 0; }
-.cmp-side.right { text-align: right; }
-.cmp-name { font-size: 12px; color: var(--text); line-height: 1.35; }
-.cmp-value {
+.gates-list { display: flex; flex-direction: column; gap: 14px; }
+.gate-check-item { display: flex; gap: 10px; align-items: flex-start; }
+.gate-check-label { font-size: 12.5px; font-weight: 500; }
+.gate-check-detail { font-size: 11px; color: var(--muted); margin-top: 1px; line-height: 1.4; }
+
+.gate-icon {
+  flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; line-height: 1; margin-top: 1px;
+}
+.gate-icon.pass { background: var(--green-bg); color: var(--green); }
+.gate-icon.fail { background: var(--red-bg); color: var(--red); }
+.gate-icon.unknown { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+/* The "you are here" pointer to the current side/lens isn't a pass/fail state at all, so it gets
+   the accent, not a status color — it would otherwise read as "this branch passed", which is a
+   claim the arrow isn't making. */
+.gate-icon.pointer { background: var(--accent-bg); color: var(--accent); }
+
+.data-health { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.health-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.health-title { font-size: 11px; letter-spacing: 0.04em; color: var(--muted); }
+.health-count {
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; font-size: 11px; color: var(--text);
+}
+.health-bar { height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.health-fill { height: 100%; background: var(--yellow); border-radius: 2px; }
+.health-caption { font-size: 10.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+
+.focus-main {
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.focus-toolbar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+/* Long/Short and Entry/Exit/Risk are both segmented controls, same shape, different content —
+   one shared pattern rather than two near-identical ones. */
+.side-toggle, .tab-toggle {
+  display: inline-flex; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 2px;
+}
+.side-toggle-btn, .tab-toggle-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: none; border: none; border-radius: 6px;
+  padding: 6px 12px; font-size: 12.5px; color: var(--muted); cursor: pointer;
+  font-family: inherit; transition: background var(--motion-fast), color var(--motion-fast);
+}
+.side-toggle-btn:hover, .tab-toggle-btn:hover { color: var(--text); }
+.side-toggle-btn.active, .tab-toggle-btn.active {
+  background: var(--panel-2); color: var(--text); font-weight: 500;
+}
+
+/* The dot reflects live favorability of THIS side's entry rules right now (pass/fail/unknown),
+   not a fixed Long=green/Short=red identity color — Long shows red when its condition currently
+   doesn't hold, same as Short would. A branding color here would silently disagree with the
+   badge two clicks away. */
+.side-dot { width: 7px; height: 7px; border-radius: 50%; }
+.side-dot.pass { background: var(--green); }
+.side-dot.fail { background: var(--red); }
+.side-dot.unknown { background: var(--muted); }
+
+/* The count only ever tallies rules that resolved to pass/fail — see metPillHtml()'s comment for
+   why a never-evaluated group renders "Not evaluated" here instead of a 0-of-0 ratio. */
+.met-pill {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--muted);
   font-variant-numeric: tabular-nums;
-  font-size: 12.5px; margin-top: 3px; color: var(--text);
 }
-/* A literal isn't a live reading — it says so in the muted voice the page uses for "nothing to
-   report here", so it can never be mistaken for a value that was fetched. */
-.cmp-value.literal, .cmp-value.none { font-family: inherit; font-size: 10.5px; font-style: italic; color: var(--muted); }
+.met-pill.unknown { font-style: italic; }
+.met-dots { display: flex; gap: 3px; }
+.met-dot { width: 14px; height: 4px; border-radius: 2px; background: var(--bg); border: 1px solid var(--border); }
+.met-dot.pass { background: var(--green); border-color: transparent; }
+.met-dot.fail { background: var(--red); border-color: transparent; }
 
-/* The operator carries the outcome tint, not the operand values: in "A > B" neither side is
-   individually right or wrong, the comparison between them is. */
-.cmp-op {
+/* The spine: one AND/OR/THEN chain, top to bottom. A node's dot sits on a continuous vertical
+   line (::before spans the full node height, clipped by the container so the last node's line
+   doesn't run past it) — the .spine-link rows between nodes carry the actual AND/THEN label, so
+   the line itself is purely the "this is one continuous chain" visual, no text of its own. */
+.spine { position: relative; }
+.spine-node {
+  position: relative;
+  display: flex; gap: 14px; align-items: flex-start;
+  padding: 12px 0;
+}
+.spine-node::before {
+  content: ""; position: absolute; left: 5px; top: 0; bottom: 0; width: 2px;
+  background: var(--border);
+}
+.spine-node:first-child::before { top: 50%; }
+.spine-node:last-child::before { bottom: 50%; }
+
+.spine-dot {
+  position: relative; z-index: 1; flex-shrink: 0; margin-top: 4px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--line);
+}
+.spine-dot.pass { border-color: var(--green); background: var(--green-bg); }
+.spine-dot.fail { border-color: var(--red); background: var(--red-bg); }
+.spine-dot.unknown { border-color: var(--border); background: var(--bg); }
+
+.spine-body {
+  flex: 1; min-width: 0;
+  background: var(--panel-2);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.spine-node.fail .spine-body { box-shadow: inset 2px 0 0 var(--red); }
+.spine-node.pass .spine-body { box-shadow: inset 2px 0 0 var(--green); }
+
+.spine-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.spine-text { font-size: 12.5px; line-height: 1.5; }
+.spine-val {
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; padding: 3px 8px; border-radius: 6px;
-  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text);
 }
-.cmp-op.pass { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); background: var(--green-bg); }
-.cmp-op.fail { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); background: var(--red-bg); }
+.spine-val.literal, .spine-val.none { font-family: inherit; font-style: italic; color: var(--muted); font-weight: 400; }
 
-.evidence-toggle {
-  background: none; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 6px; cursor: pointer; font-size: 10px; line-height: 1;
-  padding: 4px 6px; transition: transform var(--motion-fast), color var(--motion-fast);
-}
-.evidence-toggle:hover { color: var(--text); border-color: var(--line); }
-.evidence-toggle[aria-expanded="true"] { transform: rotate(180deg); color: var(--text); }
+.spine-detail { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 11px; flex-wrap: wrap; }
+.spine-detail.muted { color: var(--muted); }
 
-/* Distance to flipping. Only rendered when both sides resolved to real numbers — see
-   ruleGapHtml(). The track is scaled to ATR and *says so*; with no ATR available there's no
-   honest scale for a bar, so only the numbers show. */
-.rule-gap { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 11px; }
 .gap-delta {
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums; font-weight: 500;
@@ -1569,7 +1508,7 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .gap-delta.fail { color: var(--red); }
 .gap-delta.unknown { color: var(--muted); }
 .gap-phrase { color: var(--muted); }
-.gap-track { flex: 1; max-width: 160px; height: 3px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.gap-track { flex: 1; max-width: 140px; height: 3px; background: var(--bg); border-radius: 2px; overflow: hidden; }
 .gap-fill { height: 100%; background: var(--muted); border-radius: 2px; }
 .gap-fill.pass { background: var(--green); }
 .gap-fill.fail { background: var(--red); }
@@ -1578,83 +1517,32 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* Evidence drawer — the exact Redis key, the bar it belongs to, and the raw hash fields the value
-   came out of. Everything here is verbatim from Redis except Supertrend's "band used", which is
-   the one derivation the raw hash can't show on its own. */
-.evidence {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-  margin-top: 10px; padding-top: 10px;
-  border-top: 1px dashed var(--border);
+.spine-link {
+  margin-left: 5px; padding-left: 25px;
+  font-size: 10px; letter-spacing: 0.08em; color: var(--muted);
+  position: relative;
 }
-/* Explicit, because `display: grid` above beats the UA stylesheet's `[hidden] { display: none }`
-   on specificity — without this the drawer renders open regardless of the attribute. */
-.evidence[hidden] { display: none; }
-.ev-col { min-width: 0; }
-.ev-head {
-  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 6px;
+.spine-link::before {
+  content: ""; position: absolute; left: 5px; top: -6px; bottom: -6px; width: 2px;
+  background: var(--border);
 }
-.ev-source { font-size: 10.5px; color: var(--muted); word-break: break-all; }
-.ev-source .ev-k { margin-right: 6px; }
-.ev-source code {
+
+/* The other half of what's on screen: not "would this pass" but "is any of it real right now",
+   scoped to just the current view's inputs — see readsStripHtml()'s comment for why this is
+   deliberately narrower than the old page-wide source rail it replaces. */
+.reads-strip { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.reads-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.reads-list { display: flex; gap: 20px; flex-wrap: wrap; }
+.read-tile { min-width: 90px; }
+.read-label { font-size: 10.5px; color: var(--muted); }
+.read-value {
   font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10.5px; color: var(--text);
+  font-variant-numeric: tabular-nums; font-size: 12.5px; margin-top: 2px;
 }
-.ev-source.lit, .ev-source.none { font-style: italic; }
-.ev-asof {
-  font-size: 10.5px; color: var(--muted); margin-top: 3px;
-  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-.ev-fields { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
-.ev-field { display: flex; justify-content: space-between; gap: 10px; font-size: 10.5px; }
-.ev-k { color: var(--muted); white-space: nowrap; }
-.ev-v {
-  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums; color: var(--text);
-  text-align: right; word-break: break-all;
-}
-
-/* Container query, not a viewport one: the same .eval-row renders both full-width (Gate 3, ~900px)
-   and inside a fork column (~420px), so what it needs to know is how much room *it* has, not how
-   wide the window is. A media query would stack the roomy top-level rows and the cramped fork
-   rows at the same breakpoint, which is wrong for both. */
-.rule-node { container-type: inline-size; }
-
-@container (max-width: 460px) {
-  .rule-compare { grid-template-columns: 1fr; gap: 4px; }
-  .cmp-side.right { text-align: left; }
-  .cmp-op { justify-self: start; }
-  .evidence { grid-template-columns: 1fr; }
-}
-
-/* Fallback for the fork collapsing to one column on a genuinely narrow window. */
-@media (max-width: 700px) {
-  .rule-compare { grid-template-columns: 1fr; }
-  .cmp-side.right { text-align: left; }
-  .evidence { grid-template-columns: 1fr; }
-}
-
-.rule-side { margin-top: 28px; }
-.rule-side-label {
-  font-family: Archivo, sans-serif;
-  font-variation-settings: "wdth" 108, "wght" 650;
-  font-size: 13px;
-  letter-spacing: 0.02em;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.fork { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.fork-label {
-  text-align: center; font-size: 10.5px; letter-spacing: 0.1em; color: var(--muted);
-  text-transform: uppercase; margin-bottom: 10px;
-}
-.fork-label.live { color: var(--green); }
-.fork-label.dim { color: var(--muted); }
+.read-value.none { font-family: inherit; font-style: italic; color: var(--muted); font-size: 10.5px; }
 
 .legend {
-  display: flex; gap: 18px; margin-top: 32px; padding-top: 16px;
+  display: flex; gap: 18px; margin-top: 24px; padding-top: 16px;
   border-top: 1px solid var(--border);
   font-size: 11.5px; color: var(--muted); flex-wrap: wrap;
 }
@@ -1662,8 +1550,14 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .legend .dot.pass { background: var(--green); }
 .legend .dot.fail { background: var(--red); }
 .legend .dot.unknown { background: var(--muted); }
-.legend .dot.neutral { background: var(--line); }
 
-@media (max-width: 760px) {
-  .fork { grid-template-columns: 1fr; }
+@media (max-width: 860px) {
+  .focus-layout { grid-template-columns: 1fr; }
+  .gates-rail { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px 20px; }
+  .data-health { grid-column: 1 / -1; margin-top: 0; }
+}
+
+@media (max-width: 560px) {
+  .focus-toolbar { flex-direction: column; align-items: flex-start; }
+  .met-pill { margin-left: 0; }
 }

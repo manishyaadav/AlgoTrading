@@ -9,244 +9,192 @@ data actually backs each condition — not a trading engine, a window onto one. 
 
 ---
 
-## Design brief: honor the app, don't reskin it
+## This is the second design, not the first
 
-This page shipped from a static mockup reviewed and approved before any backend code existed (see
-`WARMUP_AND_INDICATOR_PLAN.md`'s commit history for that conversation) — the brief was explicit:
-reuse the existing design system exactly, don't invent a new visual identity for one page. Every
-color token, every type role (Archivo for names/titles, Fira Code for values/data, Inter Tight for
-body copy), and the card shell itself (`.rule-node` is `.candle-row`/`.status-card`'s same
-`--surface`/`--border`/`backdrop-filter: blur(6px)` shape under a new name) come straight from
-`style.css`'s existing tokens. The only genuinely new primitives are the vertical connector spine,
-the headline-value/eyebrow layout, and the entry/exit fork — the things this page needed that
-nothing else on the dashboard already had a pattern for.
+The page shipped originally as an always-show-everything spine: every gate (deployed? → session? →
+session rules → position), both sides (Long and Short stacked in full), and both branches per side
+(Entry live, Exit a static preview) all on screen simultaneously, plus an interactive source rail
+with hover-to-trace linking and a per-rule evidence drawer showing the exact Redis key and raw hash
+fields behind every value. That version's full rationale — the gap bar's ATR scaling, the
+ownership-avoids-name-collision story behind `.eval-row`, the ~420px container-query row, the ATR
+gap-bar honesty constraint — is preserved in this file's git history if any of it needs revisiting.
 
-## Above the spine: what's common to every strategy, shown once
+It was replaced with a **single-branch "Focus" redesign**, built from a mockup: pick a side
+(Long/Short) and a lens (Entry/Exit/Risk), and only that one chain renders. The trade-off is real,
+not free — the old page could answer "what does the whole tree look like right now" in one glance;
+this one answers "is *this* path armed" faster, at the cost of the other seven combinations being a
+click away. The interactive evidence-drawer/hover-linking system did not carry over — replaced by a
+plain "Reads" strip at the bottom of whatever's currently on screen, no drill-down. That's a
+genuine capability drop, made deliberately: the mockup this shipped from didn't have room for it,
+and re-adding it to the new layout is a future call, not an oversight to silently restore.
 
-Two things used to be part of every strategy's own gate sequence and weren't actually facts about
-that strategy at all — they've since moved out, each for its own reason:
+## Above the branch: what's common to every strategy or every gate, shown once
 
-- **"Strategy deployed?" is gone.** The page only ever reaches a strategy's tree through a
-  strategy that's already known to be deployed (the switcher below is built off `deployedVersion`,
-  and the backend 404s on an undeployed id) — a gate whose answer is always "yes" had nothing left
-  to tell you.
-- **The session/holiday gate moved above the switcher, rendered once.** Redis `"India"` is the same
-  state no matter which deployed strategy is selected — it was never really a fact about *this*
-  strategy, just duplicated inside every strategy's response as if it were. It's now its own
-  standalone `GET /api/session-status` call, rendered with the same `gateNodeHtml()` + `.connector`
-  it always used, just outside `.rule-workspace` instead of as that strategy's own "Gate 2".
+Two things are facts about the *whole page*, not about whichever branch is currently focused, and
+render outside the toggle:
 
-**The strategy switcher** (`.strategy-switcher`, a row of `.strategy-chip` buttons) only renders
-when 2+ strategies are deployed at once — one deployed strategy has nothing to switch between, so
-the single-strategy case looks exactly as it always did, chip-less. Clicking a chip re-fetches and
-repaints everything below it (identity, source rail, spine, both forks) for that strategy; the
-session banner above it doesn't change, since it isn't strategy-specific.
+- **The strategy switcher** (`.strategy-switcher`, a row of `.strategy-chip` buttons) only renders
+  when 2+ strategies are deployed at once. Clicking a chip re-fetches and repaints everything below
+  it for that strategy; the currently-selected side/lens (Long/Short, Entry/Exit/Risk) is *not*
+  reset by a strategy switch — `ruleEngineSide`/`ruleEngineTab` are module state independent of
+  `ruleEngineSelectedId`, so checking "Short/Exit" across several strategies in a row doesn't mean
+  re-clicking the same two toggles every time.
+- **"Strategy deployed?" doesn't exist as a gate at all.** The page only ever reaches a strategy's
+  tree through one that's already known to be deployed (`GET .../rule-status` 404s otherwise, and
+  the switcher is built off `deployedVersion`) — a gate whose answer is always "yes" had nothing to
+  tell you, so it was never carried into this design either.
+- **The session/holiday gate is a `GET /api/session-status` call**, independent of which strategy is
+  selected (Redis `"India"` is the same state for all of them). It's folded into the **Gates
+  Cleared** checklist as that checklist's first item, not rendered as its own separate block —
+  see below.
 
-## Layout: a spine, not a grid
+## Layout: a checklist rail + one focused panel
 
-What's left of the old fixed sequence is genuinely strategy-specific: Gates 1-2 (Trading Session
-Rules → Position) run down a single vertical `.flow`, each `.rule-node` connected to the next by a
-`.connector` — a 2px line with a small arrow, colored to the gate's own status (green on pass, red
-on fail, the neutral `--line` token while still gray/unknown). Still a spine, not a branching
-diagram — a strict sequence, not a decision tree, so drawing it as one is honest about the actual
-control flow (nothing skips a gate; a `fail` upstream doesn't currently grey out what's below it
-either — see "What this page doesn't do yet" below).
+`.focus-layout` is a fixed 260px rail (`.gates-rail`) beside a fluid main panel (`.focus-main`), not
+sticky — the page is short enough now (one branch, not the whole tree) that a sticky rail would add
+scroll-jank for no reason the old page's several-viewports-tall tree actually had.
 
-**The fork happens once, at the Position gate** — `.fork` (`display:grid;
-grid-template-columns:1fr 1fr`) splits into the "not in position" column (Entry Rules, live) and
-the "in position" column (Exit/Stop-Loss Rules, a static preview). Two `.fork-col`s under one
-`.fork-label` row each, not a re-branching tree per rule — the strategy schema only actually
-branches once (in-position or not), so the visual only branches once too.
+### Gates Cleared: four items, only one of which is a gate
 
-**Long and Short are two full copies of the same shape, stacked**, not tabbed or toggled — `.rule-
-side` + `.rule-side-label` heading, each with its own complete fork. Considered a tab switcher;
-rejected it, because the whole point of this page is "what would the rules currently decide,
-seeing everything at once" — hiding Short behind a click while looking at Long defeats that, and
-the two sides are short enough (2 entry rules, 2 risk rules, 5 exit rules each in the real deployed
-strategy) that stacking costs a scroll, not real cognitive load.
+`.gates-list` renders, in order:
 
-## The source rail: what the engine is actually looking at
+1. **Session today** — the standalone session gate above, compact: `{state} · gated open` on pass,
+   `{state} — no session today` on fail.
+2. **Trading session rules** — the strategy's own session-gate rule group (Pivot Central Range vs.
+   prior close, in the shipped strategy). Compact detail reuses the exact same gap-phrase function
+   the spine uses (`ruleGapPhrase`), so "passing by 113.89" in the checklist and in the full rule
+   row downstream always agree — computed once, displayed twice, never two independent formatters
+   that could drift apart.
+3. **In a position** — the permanent placeholder gate (see below). Fixed client-side copy ("Nothing
+   tracks this — assumed flat"), since the backend's full sentence is written for a lone card, not a
+   one-line checklist item; the *tone* (icon color) still comes from the live `positionGate.status`.
+4. **`{Side}` branch** — not a gate at all, a "you are here" pointer to whichever side/lens the main
+   panel currently shows. Gets its own icon tone (`.gate-icon.pointer`, accent-colored) specifically
+   *so it's not mistaken for a passed gate* — an arrow, not a checkmark.
 
-The rule tree answers "what would be decided". It structurally cannot answer the question that
-comes first — **what is the engine reading, and is any of it real right now.** That's the rail: a
-sticky left column listing every live input the evaluator touches, with its current value, the
-scope it belongs to, and a count of the rules and gates reading it.
+Icons are ✓ (pass, green), ✕ (fail, red), ? (unknown, muted), ↓ (pointer, accent) — `gateChecklistIcon()`
+in `app.js`.
 
-- **Backed vs. unbacked is the rail's primary distinction**, and unbacked cards get the same dashed
-  border and transparent background `.placeholder-node` already uses for the gates this page can't
-  answer. An input with no feed is the same kind of honest nothing as a gate with no answer, so it
-  looks the same.
-- **The count is on every card, backed or not.** `Position / order state` showing `1` next to a
-  dashed border, wired to a gate that in turn governs an entire branch, states the stack's biggest
-  gap as a structural fact rather than a paragraph of caveat.
-- **A card shows the *input*, not the rule's use of it.** The rule row for the session gate renders
-  `0.0038 × 24,583.80 = 93.42`; the card renders `24,583.80`, because 93.42 is a number the rule
-  computes and exists nowhere in Redis. Captioning a card with a derived value would be labelling
-  the wrong thing.
-- **Sorted backed-first, then in the order the tree first reaches them** — so the rail reads roughly
-  top-to-bottom alongside the rules beside it, and what's live is what you see first.
+### Data health
 
-## Linking: hover to trace, click to pin
+Directly below the checklist, not a separate card: a thin progress bar (`{backed}/{total}` of
+`data.sources`, the same union of every input the current strategy's rule tree touches this page
+always had) plus a one-line caption naming what's *not* backed and why it matters
+("`{n}` inputs have no writer. Exit and risk rules can't evaluate until they do."). This is the
+compact replacement for the old page's `{backed} of {total} backed` rail header — the full
+per-input card list that used to hang below it moved to the **Reads** strip (below), scoped to only
+what's currently on screen rather than everything in the tree at once.
 
-Hovering either side highlights the other and draws bezier connectors between them; everything
-unrelated dims to 25% rather than hiding, so the shape of the whole tree stays legible and you can
-see *where* the highlighted rules sit inside it.
+## The focus panel: side, lens, spine, reads
 
-- **Pinning exists because hover cannot survive scrolling.** The tree is several viewports tall; a
-  hover-only interaction could never trace an input down to the rules at the bottom, which is the
-  main thing anyone would want to do with it. Click pins, click again releases, and the connectors
-  redraw on scroll (rAF-throttled).
-- **Connectors are drawn only to rows currently on screen.** A curve to something 3000px below is
-  noise, not information — the dimming already carries the relationship for everything off-screen.
-- **The 44px column gap is a connector channel, not decoration.** At the 20px it started with, a
-  curve to a rule 400px down had so little horizontal room it rendered as a near-vertical hairline
-  against the column edge, indistinguishable from a border. Lines need room across to read as lines.
-- **Below 1200px the rail moves above the tree and the connectors turn off.** The rail plus channel
-  eat enough width that the fork columns stop being readable, and a legible tree matters more than
-  the drawing. Highlighting still works in that mode; only the curves go.
+`.focus-toolbar` holds three things in a row: the side toggle, the lens toggle, and a right-aligned
+"N of M met" pill.
 
-**Never-evaluated rules carry their inputs too.** This is the whole reason the rail is worth
-building: pinning the live Supertrend lights up two Long entry rules *and* two Exit rules that can
-never run. "This rule reads Supertrend" is a fact about the rule definition — true whether or not
-anything evaluates it — so naming it is honest, while resolving a value for it would not be. The
-backend keeps those separate on purpose (`SourceRegistry.Touch` vs `Fill`): an input can only
-become "backed" by actually having been read, never by being referenced.
+- **Side toggle** (`.side-toggle`, Long/Short) — each button carries a `.side-dot` colored by that
+  side's **live** favorability (`data.long.entryRules.status` / `data.short.entryRules.status`):
+  green if its entry rules currently pass, red if they fail, muted if unknown. **Not** a fixed
+  Long=green/Short=red brand color — a side reads red when its own condition currently doesn't hold,
+  whichever side that is. A fixed color here would silently disagree with the badge one click away.
+- **Lens toggle** (`.tab-toggle`, Entry/Exit/Risk) — see below for what each shows.
+- **Met pill** (`.met-pill`) — only counts rules that actually resolved to pass/fail. A
+  never-evaluated group (Risk Management on its own, the whole Exit lens) renders `Not evaluated`
+  instead of a ratio; an unknown rule inside an otherwise-live group (see "Entry" below) is drawn on
+  the spine but excluded from both the numerator and denominator — it's not a miss, it's a question
+  this stack can't answer yet, and counting it against the ratio would misrepresent what "2 of 2
+  met" is actually claiming.
 
-## The rule row: an outcome with its receipts
+**What each lens shows:**
 
-A rule row is not a sentence with a verdict stapled on — it's a comparison you can check. Three
-parts, matching the `1fr auto 1fr` shape the Strategy page's rule *editor* already uses for the
-same three parts, so a rule reads the same way whether you're writing it or watching it run:
+| Lens | Content | Live? |
+|---|---|---|
+| **Entry** | Entry Rules (AND chain), **then** Risk Management Rules chained on with a `THEN` transition | Entry: live. Risk: never evaluated |
+| **Exit** | `UpdateStopLossRules` + `ExitRules` combined (OR chain) | Never evaluated |
+| **Risk** | Risk Management Rules alone | Never evaluated |
 
-```
-Supertrend (P20, x4, 5 Minutes, Nifty_Index_Spot)
-24,480.34 (Down→RED)
-    [ > ]                                    AND   Fail   ▾
-EMA (P550, 5 Minutes, Nifty_Index_Spot)
-24,514.07
-Δ 33.73   33.73 away from passing   ▬▬▬▬▬▬▬▬   2.26× ATR
-```
+Entry deliberately shows more than its own name: whether an armed entry can actually be **sized**
+(Risk Management) is part of "would this trade happen", not a separate question, so the two groups
+share one spine with a `THEN` transition rather than living in different tabs — Risk gets its own
+tab too, as a way to zoom into just the sizing rules in isolation, but Entry's own view tells the
+complete "is this trade real" story on one screen. `combinedSpineForEntry()` in `app.js` is the one
+place this THEN-stitching happens; every other lens is a single group's rules verbatim.
 
-- **The live value sits directly under the operand it resolved from** (`.cmp-value`, Fira Code,
-  tabular). A Literal renders its name once and labels itself `literal` in the muted voice instead
-  of repeating itself — "GREEN / GREEN" would read like two independent facts agreeing.
-- **The operator carries the outcome tint, not the operand values.** In `A > B` neither side is
-  individually right or wrong; the comparison between them is. Tinting one value green would be
-  asserting something the data doesn't say.
-- **The gap readout is the point of the whole page.** "Fail" tells you the rule doesn't hold; `Δ
-  33.73` tells you it's about to. Only drawn when both sides genuinely resolved to numbers — a text
-  comparison (`Supertrend == GREEN`) has no meaningful distance, and neither does an unresolved
-  side.
-- **The bar is scaled to ATR and says so.** This is the one honesty constraint that shaped the
-  design: a bar needs a scale, and 33.73 points is only "close" or "far" relative to something.
-  ATR is the one real volatility unit available (it's already on the Supertrend hash), so the track
-  runs 0–3× ATR and labels the multiple. **When no ATR is available there is no honest scale, so
-  there is no bar** — the numbers show alone rather than a bar implying a range nobody defined.
+### The spine
 
-## The evidence drawer: lineage, not a tooltip
+One AND/OR/THEN chain, top to bottom, each rule a `.spine-node` with a colored `.spine-dot` on a
+continuous vertical line (an `::before` per node, clipped so the line starts/ends at the first/last
+dot rather than running past the panel edge) and a `.spine-link` row between nodes carrying the
+actual AND/OR/THEN label.
 
-`▾` on each row opens `.evidence` — for each side: the **exact Redis key** read, the **bar window**
-the value belongs to, and the **raw hash fields** it was derived from, verbatim and unrounded. This
-is the page's answer to "why does it think RED", and it deliberately distinguishes three different
-kinds of "why":
+Each node's body (`spineCompareHtml`) reads left to right the way the rule itself does —
+`{leftName} {leftValue} {operator} {rightValue} {rightName}` — reusing `describeOperand()` (shared
+with the Strategy page's rule editor) for the names. **A literal never shows its value twice**:
+`describeOperand(Literal "RED")` already prints `"RED"`; showing the resolved value alongside it
+too would print `"RED RED"`. Checked on the operand's own `type`, not the evidence's `kind` — a
+never-evaluated rule's evidence is always `Kind: "unresolved"` even for a literal operand (nothing
+gets resolved at all in that branch), which would otherwise draw a `—` placeholder implying a
+literal is missing data it was never going to need.
 
-| What you see | What it means |
-|---|---|
-| `redis  Indicator:Running:…` | Read from live data — here's exactly where |
-| `from the rule definition — not live data` | A literal. There is no source because there's nothing to fetch |
-| `looked in  Indicator:Running:…` | We know where this lives, checked, and it wasn't there / wasn't seeded |
-| `no source in this stack yet` | Nothing anywhere backs this operand |
+Below the compare line, one of three things:
 
-The one synthetic field is Supertrend's `band used` — which of the two stored bands *is* the
-Supertrend line depends on `TrendDirection`, and that derivation is invisible in the raw hash.
-Everything else is copied straight out of Redis; rounding it here would defeat the point.
+- **Unresolved** (`ev.status === "unknown"`) — the backend's plain-English reason, muted.
+- **Numeric comparison** — the gap readout (`ruleGapHtml`, unchanged from the old design): `Δ 33.73`,
+  a phrase (`"passing by 33.73"` / `"33.73 away from passing"`), and — only when both sides carry an
+  `Atr` field (Supertrend does) — a bar scaled 0–3× ATR with the multiple labeled. No ATR, no bar;
+  a bar needs a named scale or it's just implying a range nobody defined.
+- **Text/equality comparison** (e.g. Supertrend color vs. a Literal) — `"Matched exactly"` /
+  `"Did not match"` plus, when available, `"as of {HH:MM}"` from the operand's real `AsOf` bar
+  timestamp. **Never** a fabricated "flipped at" moment — this stack only keeps the current running
+  indicator state, not a change history, so there is no honest way to know when a value last
+  changed, only what bar it's currently as-of. Say the true thing, not the more satisfying one.
 
-**Never-evaluated rules get no drawer and keep their original compact one-line form.** Giving the
-Exit/Risk branches the resolved-value anatomy would mean a `—` under every operand: three lines of
-blank where there was one line of rule, and a static preview column taller than the live one beside
-it. The visual gap between a live row and a preview row is now itself the signal.
+### Reads strip
 
-## Interaction has to survive the refresh
+`.reads-strip`, bottom of the panel: every `data.sources` entry actually referenced by the rules
+currently on screen (union of `sourceIds` across the visible spine), each a small label+value tile,
+`"no source"` in italics if unbacked. Deliberately narrower than the old always-on source rail —
+this is "what's behind exactly what you're looking at", not the full inventory across every
+side/lens at once.
 
-The page refreshes every 5s. It used to rebuild this entire subtree on every tick, which made
-sustained interaction impossible — an open drawer, a text selection, even a hover survived at most
-five seconds. Two rules now:
+## The "Unknown"/"Can't evaluate" state is still load-bearing
 
-1. **An unchanged payload touches the DOM not at all.** Indicators only actually move on a bar
-   close (5 minutes for the deployed strategy), so the overwhelming majority of ticks are identical
-   and are skipped by comparing the serialized response.
-2. **A changed payload rebuilds, then restores.** Open drawers are tracked by a stable
-   `scope:sequence` key (`long:entry:2`) in `ruleEngineOpenRows` and reopened after the rebuild.
+Carried over unchanged in substance from the first design, renamed in label: **a rule this stack
+can't evaluate must never be dressed up as a guess.** `RuleEvaluator.cs` resolves what it genuinely
+can (Supertrend/EMA comparisons, the session-rule gate) and marks everything else `unknown` with a
+plain-English reason; the frontend shows `Can't evaluate` (`RULE_STATUS_LABELS`, matching the
+mockup's wording — was `Unknown` in the first design, same meaning) rather than any colored badge
+that could read as a real answer at a glance. The permanent-placeholder Position gate and the whole
+Exit/Risk-alone lenses inherit this the same way the old page's placeholder nodes did.
 
-Any future interactive state on this page has to answer the same question before it ships.
+## What this page doesn't do (by design, not oversight)
 
-## Naming: `.eval-row`, not `.rule-row`
-
-The Strategy page's rule *editor* already owns `.rule-row`. The first version of this page defined
-`.rule-row` again, later in the same stylesheet — which silently restyled the editor's rows on the
-other page. Two different components get two different names; check for an existing owner before
-reusing a class name here.
-
-## Status vocabulary: Pass/Fail/Unknown, not On-Track/Behind/Pending
-
-Same three semantic colors as the rest of the app (`--green`/`--red`/`--muted`, via
-`.badge.status-pass/fail/unknown`), **deliberately different words** from the Data page's
-`STATUS_LABELS` (`On Track`/`Behind`/`Pending`). Those words answer "is this data flowing on
-schedule"; this page answers "does this condition currently hold." Same underlying palette
-decision (green = good, red = bad, muted = nothing to say yet), because the *meaning* of green
-hasn't changed — just what's being judged. See `RULE_STATUS_LABELS` in `app.js`, kept as its own
-constant rather than overloading `STATUS_LABELS`.
-
-## The "Unknown" state is load-bearing, not a fallback
-
-This is the one thing this page cannot compromise on: **`Unknown` must never be dressed up as a
-guess.** The backend (`StrategyService/Engine/RuleEvaluator.cs`) resolves what it genuinely can —
-Supertrend/EMA comparisons, the Pivot Central Range session-rule gate — and marks everything else
-`unknown` with a plain-English `reason` (`"not evaluated — depends on state this stack doesn't
-track yet"`), which the frontend renders as `.unwired-tag`, an *italic, muted, small* label — never
-a colored badge, never anything that could be mistaken for a real answer at a glance. This mirrors
-the Data page's "widgets without a value have no source in this stack yet — nothing here is filled
-with placeholder numbers" ethos exactly, applied to boolean conditions instead of numeric widgets.
-
-The Position gate (`.rule-node.placeholder-node`) gets the strongest version of this treatment —
-**dashed border, muted title** — because it's not just one unresolved value, it's the gate that
-decides which entire branch below it is real. The Exit/Stop-Loss column inherits the same
-treatment for the same reason: it's not "this rule is unknown," it's "this whole branch never
-actually runs yet," which needed to read as visually distinct from an individual unresolved
-condition sitting inside an otherwise-live group (e.g. the Risk Management rules, which sit inside
-a *live* Entry Rules card but are themselves each individually tagged unknown).
-
-## What this page doesn't do yet (by design, not oversight)
-
-- **No cascading dim.** A `fail` on the session gate doesn't currently grey out any strategy's
-  spine or forks below it — every gate always renders its own real status against real data,
-  independent of what's above it. Worth revisiting once this page has been lived with — a
-  Holiday/Weekend day showing a fully "evaluated" Entry Rules card below a failed session gate
-  could read as misleading. Deferred rather than guessed at, same as everything else on this page.
-- **No manual position toggle.** Considered (see the design-discussion history in
-  `WARMUP_AND_INDICATOR_PLAN.md`) and explicitly rejected for v1 in favor of the honest permanent
-  placeholder — a fake toggle would let you "see" the Exit branch light up without it meaning
-  anything, which is exactly the kind of thing this page exists to avoid.
+- **No cascading dim.** A `fail` on the session gate, or on Trading Session Rules, doesn't currently
+  grey out the focus panel below it — everything always renders its own real status against real
+  data, independent of what's above it in the checklist. Same deferred-not-guessed stance as the
+  first design.
+- **No manual position toggle.** Explicitly rejected, same reasoning as before: a fake toggle would
+  let you "see" the Exit lens light up without it meaning anything.
+- **No evidence drawer / no hover-linking.** This is the one real capability the redesign dropped,
+  not merely renamed — see "This is the second design, not the first" above. Re-adding a
+  provenance drill-down to this layout (a modal? an expand-in-place on the Reads tile?) is an open
+  question, not a planned next step.
 
 ## Checklist
 
 - [ ] Every color/type token comes from `style.css`'s existing `:root` set — no new hex values
-- [ ] `Unknown` renders as `.unwired-tag` (italic, muted, small) — never a colored badge
-- [ ] The Position gate and the Exit/Stop-Loss branch both carry `.placeholder-node` (dashed
-      border) — the two places this page is honest about having nothing real to show
-- [ ] Rule text goes through the Strategy page's existing `describeRule()`/`describeOperand()` —
-      never reformatted a second way in this page's own code
-- [ ] Long and Short both render in full, always, never behind a tab/toggle
-- [ ] `RULE_STATUS_LABELS` stays separate from `STATUS_LABELS` — same colors, different words, on
-      purpose
+- [ ] `Can't evaluate` renders as `.badge.status-unknown` (muted, not colored red/green) — never a
+      claim of a real pass/fail answer
+- [ ] The Position gate's checklist item and the Exit/Risk lenses all read `Not evaluated`/muted,
+      the two places this page is honest about having nothing real to show
+- [ ] Rule text goes through the shared `describeOperand()` — never reformatted a second way here
+- [ ] A literal operand's value renders once, checked on the operand's own `type`, never on
+      `evidence.kind` (unreliable for never-evaluated rules — see the spine section above)
+- [ ] `RULE_STATUS_LABELS` stays separate from the Data page's `STATUS_LABELS` — same colors,
+      different words, on purpose
 - [ ] The gap bar is only drawn against a **named** scale (ATR today). No scale → no bar
-- [ ] Evidence `fields` are verbatim Redis values — never rounded or reformatted for display
-- [ ] Never-evaluated rules keep the compact one-line form and get no drawer
-- [ ] New interactive state survives the 5s refresh (skip-if-unchanged + restore-after-rebuild)
-- [ ] Rows sized with a **container** query, not a media query — the same row renders full-width
-      and inside a ~420px fork column
-- [ ] Unbacked source cards use `.placeholder-node`'s dashed treatment — same honesty, same look
-- [ ] A source card shows the input's own value, never a value the rule derives from it
-- [ ] `FeedsRules` counts never-evaluated rules too — a dead branch reading a live input is the
-      relationship the rail exists to show
-- [ ] An input becomes `backed` only by being read (`Fill`), never by being referenced (`Touch`)
+- [ ] No fabricated timestamps — `"as of {AsOf}"`, never `"flipped/changed at {time}"`, since this
+      stack keeps no change history, only current state
+- [ ] The "met" ratio excludes never-evaluated rules from both numerator and denominator
+- [ ] Side-toggle dots reflect live favorability, never a fixed Long/Short brand color
+- [ ] New interactive state (side/tab selection) survives the 5s refresh — see
+      `renderRuleEngineContent()`/`ruleEngineLastData` in `app.js`
+- [ ] The Reads strip only shows sources the *currently visible* spine actually references
