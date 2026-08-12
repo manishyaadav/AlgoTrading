@@ -185,6 +185,57 @@ curl http://localhost:8096/api/strategies/second-income/rule-status
 
 ⚠️ **Azure Functions routing gotcha, if you add another `strategies/<literal>` route**: the isolated-worker HTTP router resolves an ambiguous literal-vs-`{id}` match by **function name alphabetical order**, not route specificity. `GetDataRequirements` (D) sorts before `GetStrategy` (S) and correctly wins; a function literally named `GetWarmUpPlan` (W) sorts *after* `GetStrategy` and silently loses — every request landed in `GetStrategy` with a `"No strategy with id 'warm-up-plan'"` 404, despite both routes showing up correctly in the startup log's "Mapped function route" lines. Renaming the function to `GetDataWarmUpPlan` (matching the "GetData…" prefix that's already proven to sort correctly) fixed it. Name any future literal-route function so it alphabetically precedes `GetStrategy`.
 
+### Backtest — `POST /api/strategies/{id}/backtest`
+
+Backs the dashboard's **Backtest** page. Body: `{ "startDate": "yyyy-MM-dd", "endDate": "yyyy-MM-dd" }`.
+Simulates the strategy's own rule tree bar-by-bar against real historical OHLC data — no separate
+backtest-only config, no synthetic data. Runs against the **current saved draft** (`GetById`, not
+`GetDeployedById`) — deliberately different from `rule-status`: a backtest is a pre-deployment
+validation tool, so it has to work on a strategy that's never been deployed at all, not just live
+ones. `Engine/RuleEvaluator.cs` and `Backtest/BacktestEngine.cs` share the same rule tree and
+operator semantics but don't share code — the live evaluator resolves against one Redis snapshot,
+the backtest engine resolves against a whole precomputed historical series; forcing them through one
+abstraction would have made both harder to follow for what's a genuinely different question each
+one answers.
+
+**Two honest simplifications** (see `BacktestEngine.cs`'s own doc comment for the full reasoning):
+
+1. **Risk Management rules never gate entry.** They reference account/capital state
+   (`"Allocated Capital"`, `"Risk in Trade"`) this schema has no resolvable source for, live *or*
+   historical — the exact reason `rule-status` never live-evaluates them either. Requiring them to
+   resolve+pass before simulating an entry would mean every real deployed strategy backtests to zero
+   trades, for a reason that has nothing to do with whether the strategy is actually any good.
+2. **P&L is raw price points, not currency.** There's no lot size, position sizing, or capital model
+   anywhere in the strategy schema — inventing one to produce a rupee figure would be exactly the
+   kind of guess this codebase's evidence-first design avoids everywhere else.
+
+**Data availability reuses `HistoricalSufficiency` as-is** — no new ohlc-live endpoint. That
+endpoint only ever answers "the last N weekdays counting back from `asOf`"; walking backward from
+`endDate + 1 day` for exactly as many weekdays as fall inside `[startDate, endDate]` checks precisely
+that range. `HistoricalSufficiency`'s own doc comment names this exact reuse as one of the reasons it
+exists as a standalone capability rather than a private step of WarmUpService.
+
+**Response shape** (`status` is the field to branch on):
+
+| `status` | Meaning |
+|---|---|
+| `completed` | Ran the simulation. `trades`/`stats` populated (`trades` can be an empty list — a real "no signals fired in this period" result, not an error) |
+| `insufficient-data` | `HistoricalSufficiency` reports missing trading days in this range — `dataAvailability.days` lists exactly which ones |
+| `no-entry-rules` | The strategy has no Long or Short `EntryRules` — nothing to simulate entering on |
+| `no-instrument` | No rule anywhere references an `Instrument` — nothing to fetch historical data for |
+| `error` | ohlc-live unreachable, or `HistoricalSufficiency` said data existed but the actual fetch came back empty (the sufficiency check only confirms the monthly blob file *exists*, not that it has real rows for this specific range — see `HistoricalSufficiency.cs`'s own doc comment) |
+
+Each `BacktestTrade` carries the exit rule's plain-language description (`ExitReason`) or
+`"Period end (forced close)"` for a position still open when the data ran out — a real position at
+period end is force-closed at the last bar rather than silently dropped from the stats, which would
+understate exposure.
+
+```bash
+curl -X POST http://localhost:8096/api/strategies/retirement/backtest \
+  -H "Content-Type: application/json" \
+  -d '{"startDate":"2026-07-15","endDate":"2026-08-11"}'
+```
+
 ## HTTP API
 
 Route prefix: `api` (default). All responses are JSON, camelCase, with permissive CORS (`Access-Control-Allow-Origin: *`) since the dashboard's browser JS calls this cross-origin.
@@ -197,6 +248,7 @@ Route prefix: `api` (default). All responses are JSON, camelCase, with permissiv
 | GET | `/api/strategies/{id}` | Full strategy JSON |
 | GET | `/api/strategies/{id}/rule-status` | The deployed rule tree evaluated against live Redis state — see above |
 | GET | `/api/session-status` | The holiday/weekend gate, common to every deployed strategy — see above |
+| POST | `/api/strategies/{id}/backtest` | Simulate the strategy's saved draft against historical OHLC data — see above |
 | PUT / POST | `/api/strategies/{id}` | Create or overwrite — body is validated as parseable JSON before writing; `Version` is server-computed (see above), `DeployedVersion` carries over unchanged; on-disk file is re-serialized in PascalCase regardless of what casing was sent |
 | POST | `/api/strategies/{id}/deploy` | Set `DeployedVersion` = current `Version`. No other side effects yet |
 | DELETE | `/api/strategies/{id}` | Delete that strategy entirely — every version file in `saved/` plus the current `deployed/` file, if any |
@@ -240,3 +292,4 @@ docker-compose -f docker-compose-live.yml -p live up -d strategy-live   # recrea
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` |
 | `ASPNETCORE_ENVIRONMENT` | `docker` |
 | `RedisConnectionString` | `redis-live:6379` — needed by `GET /api/strategies/{id}/rule-status` (see above); this service's first Redis dependency |
+| `OhlcApiBase` | `http://ohlc-live` — needed by `POST /api/strategies/{id}/backtest` (see above); this service's first HTTP-out dependency |

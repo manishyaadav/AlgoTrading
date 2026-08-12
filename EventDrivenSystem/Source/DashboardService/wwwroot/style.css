@@ -736,6 +736,7 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .form-field label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); font-weight: 500; }
 
 .form-field input[type="text"],
+.form-field input[type="date"],
 .form-field select {
   padding: 8px 10px;
   border-radius: 6px;
@@ -1564,4 +1565,131 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 @media (max-width: 560px) {
   .focus-toolbar { flex-direction: column; align-items: flex-start; }
   .met-pill { margin-left: 0; }
+}
+
+/* --- Backtest page ---
+   Same card shell every other page uses (.surface/.border/.badge), plus two new primitives this
+   page actually needed: a stat-tile grid (bt-stat) and a trade blotter (bt-trade-table) — a real
+   <table>, not a div grid like the rest of the app's row lists, because a trade ledger is exactly
+   the shape tables exist for (many rows, few fixed columns, meant to be scanned down a column). */
+
+.backtest-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.backtest-form .form-field { min-width: 160px; }
+.backtest-form select#bt-strategy { min-width: 220px; }
+
+.bt-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  font-size: 12.5px;
+}
+.bt-status.pass { border-color: color-mix(in srgb, var(--green) 35%, var(--border)); }
+.bt-status.fail { border-color: color-mix(in srgb, var(--red) 35%, var(--border)); }
+.bt-status.warn { border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); }
+.bt-status-icon { flex-shrink: 0; margin-top: 1px; }
+.bt-status-icon.pass { color: var(--green); }
+.bt-status-icon.fail { color: var(--red); }
+.bt-status-icon.warn { color: var(--yellow); }
+.bt-status-title { font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650; font-size: 13px; margin-bottom: 3px; }
+.bt-status-detail { color: var(--muted); line-height: 1.5; }
+
+.bt-missing-days {
+  margin-top: 8px;
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.bt-missing-day {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px; padding: 2px 7px; border-radius: 999px;
+  background: var(--red-bg); color: var(--red);
+}
+
+.bt-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.bt-stat {
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.bt-stat-label { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.bt-stat-value {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 19px; font-weight: 500;
+}
+.bt-stat-value.pass { color: var(--green); }
+.bt-stat-value.fail { color: var(--red); }
+.bt-stat-sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; }
+
+.bt-trades-title {
+  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 13px; margin-bottom: 10px;
+}
+.bt-trades-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+.bt-trade-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+.bt-trade-table th {
+  text-align: left; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 500; padding: 10px 14px;
+  background: var(--panel-2); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0;
+}
+.bt-trade-table td { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.bt-trade-table tbody tr:last-child td { border-bottom: none; }
+.bt-trade-table tbody tr:hover { background: var(--panel-2); }
+.bt-trade-table .num { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.bt-trade-table .pnl.pass { color: var(--green); }
+.bt-trade-table .pnl.fail { color: var(--red); }
+.bt-trade-table .reason { white-space: normal; color: var(--muted); max-width: 320px; }
+.bt-side { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; font-weight: 500; }
+.bt-side.long { background: var(--green-bg); color: var(--green); }
+.bt-side.short { background: var(--red-bg); color: var(--red); }
+
+/* The indicator's own per-candle series, for actually eyeballing a rule against real data rather
+   than only trusting trade outcomes — a flip is easy to miss from P&L alone (see the intraday
+   square-off gap this exact view surfaced), obvious once the series itself is on screen. Vertical
+   scroll, not horizontal like the trades table — this can run to thousands of rows for a long
+   range/fine timeframe, and a fixed-height scroller keeps the page itself from growing to match. */
+.bt-indicator-block { margin-top: 22px; }
+.bt-indicator-title { font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650; font-size: 13px; margin-bottom: 10px; }
+.bt-indicator-scroll { max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; }
+.bt-indicator-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.bt-indicator-table th {
+  text-align: left; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 500; padding: 9px 14px;
+  background: var(--panel-2); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0;
+}
+.bt-indicator-table td { padding: 6px 14px; border-bottom: 1px solid var(--border); }
+.bt-indicator-table tbody tr:last-child td { border-bottom: none; }
+.bt-indicator-table tbody tr:hover { background: var(--panel-2); }
+.bt-indicator-table .num { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.bt-indicator-table .dir { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; font-weight: 500; }
+.bt-indicator-table .dir.up { background: var(--green-bg); color: var(--green); }
+.bt-indicator-table .dir.down { background: var(--red-bg); color: var(--red); }
+.bt-indicator-table .dir.none { color: var(--muted); }
+.bt-indicator-table .pen.yes { color: var(--yellow); font-weight: 500; }
+.bt-indicator-table .pen.no, .bt-indicator-table .pen.none { color: var(--muted); }
+/* The row where direction actually changed from the row above it — an accent left-edge, not a
+   full-row fill, so it reads as "this is the flip" without fighting the up/down pill's own color. */
+.bt-indicator-table tr.flip td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+@media (max-width: 700px) {
+  .backtest-form { flex-direction: column; align-items: stretch; }
 }
