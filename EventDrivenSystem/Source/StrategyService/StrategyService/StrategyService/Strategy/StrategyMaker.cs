@@ -460,11 +460,20 @@ namespace StrategyService.Strategy
         /// Documented assumptions, in order of precedence — none of these are verified against a real
         /// indicator computation, since none exists yet:
         ///
-        /// 1. Period &gt; 0 (EMA, Supertrend, any period-based indicator): needs at least Period bars
-        ///    to produce one value — the mathematical minimum, not an extra-converged buffer. This
-        ///    matches the earlier "pull last 7-8 days" estimate for EMA(550) on 5-min almost exactly
-        ///    (550 bars * 5 min / 375 trading-min/day ≈ 7.3 → 8 days), which is why the minimum was
-        ///    chosen over a larger multiple.
+        /// 0. Indicator == "Adaptive Supertrend": needs Period (its ATR length) bars to seed the
+        ///    first raw ATR value, PLUS a further AdaptiveVolatilityClusterer.TrainingWindow (100,
+        ///    duplicated as a local constant below — no shared project reference exists between this
+        ///    service and WarmUpService/AggregationService, same as everywhere else this kind of
+        ///    constant gets duplicated) bars of raw-ATR history before its K-Means volatility
+        ///    clustering has a full window to train on for even the earliest seedable bar. The
+        ///    generic Period-only rule below would under-provision history for this specific
+        ///    indicator — WarmUpService's seeder would never have enough bars to produce a seed at
+        ///    all. See WarmUpService/Indicators/AdaptiveSupertrendSeeder.cs for the full derivation.
+        /// 1. Period &gt; 0 (EMA, Supertrend, any other period-based indicator): needs at least Period
+        ///    bars to produce one value — the mathematical minimum, not an extra-converged buffer.
+        ///    This matches the earlier "pull last 7-8 days" estimate for EMA(550) on 5-min almost
+        ///    exactly (550 bars * 5 min / 375 trading-min/day ≈ 7.3 → 8 days), which is why the
+        ///    minimum was chosen over a larger multiple.
         /// 2. Period == 0 and Type == "Indicator" (e.g. Pivot Central Range, which has no Period/
         ///    Multiplier of its own): assumed to need exactly 1 prior trading day, independent of
         ///    whatever Timeframe it's being *compared* against in the rule (Pivot Central Range is
@@ -483,6 +492,19 @@ namespace StrategyService.Strategy
         /// </summary>
         private static int ComputeDaysNeeded(IndicatorUsage reference, string timeframe)
         {
+            // Mirrors AdaptiveVolatilityClusterer.TrainingWindow (WarmUpService/AggregationService) —
+            // kept as a local constant rather than a shared reference, consistent with how every
+            // other cross-service constant in this codebase (IndicatorStateTtlDays, the manifest key
+            // name, ...) is independently duplicated rather than shared.
+            const int adaptiveSupertrendKMeansTrainingWindow = 100;
+
+            if (reference.Period > 0 && string.Equals(reference.Indicator, "Adaptive Supertrend", StringComparison.OrdinalIgnoreCase))
+            {
+                var timeframeMinutes = ParseTimeframeToMinutes(timeframe);
+                if (timeframeMinutes == null) return -1;
+                return (int)Math.Ceiling((double)(reference.Period + adaptiveSupertrendKMeansTrainingWindow) * timeframeMinutes.Value / TradingMinutesPerDay);
+            }
+
             if (reference.Period > 0)
             {
                 var timeframeMinutes = ParseTimeframeToMinutes(timeframe);

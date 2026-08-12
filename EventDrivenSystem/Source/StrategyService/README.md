@@ -103,8 +103,9 @@ rather than silently doing nothing:
 |---|---|
 | Pivot Central Range vs. `N × Closing Price (Previous)` — needs `PriorClose`, see `WarmUpService/README.md` | Anything needing account/capital state (Risk Management rules) |
 | EMA vs. a literal or another indicator | Anything needing position/order state (Update-Stop-Loss, Exit rules — see the Position gate below) |
-| Supertrend vs. EMA (numeric) | `RelativePosition: "Previous"` on EMA/Supertrend/PCR — only the current running state is kept, no separate prior-bar snapshot |
+| Supertrend vs. EMA (numeric) | `RelativePosition: "Previous"` on EMA/Supertrend/Adaptive Supertrend/PCR — only the current running state is kept, no separate prior-bar snapshot |
 | Supertrend vs. `"GREEN"`/`"RED"` (Literal) — translates Redis's `TrendDirection: "Up"/"Down"` via the standard TradingView convention, the one place that translation happens anywhere in this codebase | Any other raw Expression (`Candle High/Low`, `Current Profit`, `Time in Trade`, `Trading Session State`, …) — no live source for these anywhere yet |
+| Adaptive Supertrend, same shape as Supertrend (K-Means-clustered ATR instead of a plain-average one — see `WarmUpService/README.md`) | |
 
 **The "In a position?" gate is a permanent placeholder** — confirmed via full repo search while
 building this: no `PortfolioService`, no position/order Redis key, no Kafka topic, nothing tracks
