@@ -1684,6 +1684,8 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .bt-indicator-table .dir.up { background: var(--green-bg); color: var(--green); }
 .bt-indicator-table .dir.down { background: var(--red-bg); color: var(--red); }
 .bt-indicator-table .dir.none { color: var(--muted); }
+.bt-indicator-table .pen.yes { color: var(--yellow); font-weight: 500; }
+.bt-indicator-table .pen.no, .bt-indicator-table .pen.none { color: var(--muted); }
 /* The row where direction actually changed from the row above it — an accent left-edge, not a
    full-row fill, so it reads as "this is the flip" without fighting the up/down pill's own color. */
 .bt-indicator-table tr.flip td:first-child { box-shadow: inset 3px 0 0 var(--accent); }

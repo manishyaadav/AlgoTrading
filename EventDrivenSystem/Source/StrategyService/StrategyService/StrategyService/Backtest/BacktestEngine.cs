@@ -124,7 +124,32 @@ namespace StrategyService.Backtest
 
                 var points = new List<IndicatorSeriesPoint>(bars.Count);
                 for (int i = 0; i < bars.Count; i++)
-                    points.Add(new IndicatorSeriesPoint(bars[i].WindowsStartTime, bars[i].Close, series[i]?.Numeric, series[i]?.Text));
+                {
+                    decimal? stValue = series[i]?.Numeric;
+                    string? direction = series[i]?.Text;
+                    bool? penetrated = null;
+                    decimal? penetratedPoints = null;
+
+                    if (stValue.HasValue && direction != null)
+                    {
+                        if (direction == "RED")
+                        {
+                            // Downtrend: the wick pokes ABOVE the line (High > ST) but Close pulls
+                            // back onto the trend's own side (<= ST) — a false break, not a flip.
+                            penetrated = bars[i].High > stValue.Value && bars[i].Close <= stValue.Value;
+                            if (penetrated == true) penetratedPoints = bars[i].High - stValue.Value;
+                        }
+                        else if (direction == "GREEN")
+                        {
+                            // Uptrend: the wick pokes BELOW the line (Low < ST) but Close pulls back
+                            // above it (>= ST) — same false-break shape, mirrored.
+                            penetrated = bars[i].Low < stValue.Value && bars[i].Close >= stValue.Value;
+                            if (penetrated == true) penetratedPoints = stValue.Value - bars[i].Low;
+                        }
+                    }
+
+                    points.Add(new IndicatorSeriesPoint(bars[i].WindowsStartTime, bars[i].Close, stValue, direction, penetrated, penetratedPoints));
+                }
                 indicatorSeriesResults.Add(new IndicatorSeriesResult(r.Reference!, r.Period, r.Multiplier, r.Timeframe!, points));
             }
 

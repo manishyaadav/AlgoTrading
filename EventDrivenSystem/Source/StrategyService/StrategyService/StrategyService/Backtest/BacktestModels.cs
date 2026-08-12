@@ -32,7 +32,15 @@ namespace StrategyService.Backtest
     // across every finer simulation tick in between. Value/Direction are null for whatever the
     // indicator hasn't seeded yet (the same "honest nothing, not a guess" every other value in this
     // codebase follows) — Direction itself is null for indicators with no GREEN/RED concept (EMA).
-    public record IndicatorSeriesPoint(DateTime Time, decimal Close, decimal? Value, string? Direction);
+    //
+    // Penetrated/PenetratedPoints: a "false" penetration — the candle's wick crossed the ST line
+    // against the trend (High above it on a RED/bearish bar, Low below it on a GREEN/bullish bar)
+    // but Close pulled back onto the trend's own side, so the trend itself didn't actually flip
+    // that bar (a real flip already shows up as a Direction change on the next row — this is
+    // specifically the "poked through and recovered" case). PenetratedPoints is how far the wick
+    // got past the line; both are null when there's nothing to measure (unseeded, or no wick
+    // crossed at all that bar).
+    public record IndicatorSeriesPoint(DateTime Time, decimal Close, decimal? Value, string? Direction, bool? Penetrated, decimal? PenetratedPoints);
 
     public record IndicatorSeriesResult(string Reference, int Period, int Multiplier, string Timeframe, List<IndicatorSeriesPoint> Points);
 

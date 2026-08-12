@@ -2149,12 +2149,20 @@ function backtestIndicatorSeriesHtml(seriesList) {
       const isFlip = p.direction != null && prevDirection != null && p.direction !== prevDirection;
       if (p.direction != null) prevDirection = p.direction;
       const dirClass = p.direction === "GREEN" ? "up" : p.direction === "RED" ? "down" : "none";
+      // A false penetration — the wick crossed the line against the trend, Close pulled back onto
+      // the trend's own side, so the trend itself didn't flip that bar (a real flip already shows
+      // up as a Direction change on the next row). "—" covers both "nothing to measure" cases:
+      // unseeded, and a bar where no wick crossed the line at all.
+      const penHtml = p.penetrated
+        ? `<span class="pen yes">${Number(p.penetratedPoints).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>`
+        : `<span class="pen ${p.penetrated === false ? "no" : "none"}">${p.penetrated === false ? "no" : "—"}</span>`;
       return `
         <tr class="${isFlip ? "flip" : ""}">
           <td class="num">${esc(btFormatDateTime(p.time))}</td>
           <td class="num">${Number(p.close).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
           <td class="num">${p.value != null ? Number(p.value).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</td>
           <td><span class="dir ${dirClass}">${p.direction ? esc(p.direction) : "—"}</span></td>
+          <td class="num">${penHtml}</td>
         </tr>`;
     }).join("");
 
@@ -2163,7 +2171,7 @@ function backtestIndicatorSeriesHtml(seriesList) {
         <div class="bt-indicator-title">${esc(backtestIndicatorLabel(series))} — ${series.points.length} candles</div>
         <div class="bt-indicator-scroll">
           <table class="bt-indicator-table">
-            <thead><tr><th>Time</th><th>Close</th><th>Value</th><th>Direction</th></tr></thead>
+            <thead><tr><th>Time</th><th>Close</th><th>Value</th><th>Direction</th><th>Penetrated</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
