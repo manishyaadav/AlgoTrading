@@ -22,7 +22,7 @@ service is section 2b there).
 4. Per requirement:
    - **Live-only references** (`DaysNeeded == 0`, e.g. raw `Candle High`/`Low`) — nothing to do,
      already flowing.
-   - **Period-based Indicator references** (EMA, Supertrend) — checks
+   - **Period-based Indicator references** (EMA, Supertrend, Adaptive Supertrend) — checks
      `Indicator:Running:{Instrument}:{Timeframe}:{Reference}:{Period}:{Multiplier}` in Redis. If
      present, leaves it alone (continuous indicators carry forward correctly from a healthy previous
      session — re-seeding isn't the normal case). If missing, seeds it from the fetched history.
@@ -40,6 +40,26 @@ service is section 2b there).
    `second-income` config). `AggregationService`'s live calculators read this fresh on every candle —
    one source of truth, so warm-up's seed and the live update path can never independently disagree
    about what's active today.
+
+## Adaptive Supertrend — a third indicator type, one extra wrinkle
+
+Ported from the "Adaptive SuperTrend — Trend + Retracement Framework" Pine Script strategy —
+calculation only (`Indicators/AdaptiveSupertrendSeeder.cs` + live counterpart in
+`AggregationService/AggregatorFunctions/Indicators/AdaptiveSupertrendCalculator.cs`), none of that
+script's execution/risk/display/alert logic. Same `TrendDirection`/`PrevUpperBand`/`PrevLowerBand`
+shape as regular Supertrend, computed differently: instead of a plain-average ATR, a K-Means model
+(`Indicators/AdaptiveVolatilityClusterer.cs`) buckets the trailing 100 raw (Wilder-smoothed) ATR
+values into High/Medium/Low volatility clusters every bar, and whichever cluster the current bar's
+own ATR lands in becomes the "ATR" the Supertrend band-ratchet actually uses (`Atr` on the hash) —
+`RawAtr`/`VolatilityCluster`/`ClusterHigh`/`ClusterMedium`/`ClusterLow` are also persisted, purely
+for transparency into what was measured vs. what the bands are using.
+
+**The one thing that isn't like the other two indicators:** `Period` (ATR length) bars alone aren't
+enough history to seed this — the K-Means step itself needs a full 100-bar trailing window of raw
+ATR values before the *earliest* seedable bar, on top of the `Period` bars needed to produce that
+first raw ATR value at all. `StrategyMaker.ComputeDaysNeeded` (StrategyService) special-cases this
+indicator by name to fetch `Period + 100` bars' worth of history instead of just `Period` — without
+that, this service would never see enough history to seed it, no matter how many days it asked for.
 
 ## Instrument name mapping
 
@@ -129,6 +149,11 @@ docker-compose -f docker-compose-live.yml -p live up -d warmup-live   # recreate
 docker exec redis-live redis-cli HGETALL "Indicator:Running:Nifty_Index_Spot:5 Minutes:EMA:550:0"
 docker exec redis-live redis-cli HGETALL "Indicator:Running:Nifty_Index_Spot:5 Minutes:Supertrend:20:4"
 docker exec redis-live redis-cli LRANGE "Indicator:Window:Nifty_Index_Spot:5 Minutes:Supertrend:20:4" 0 -1
+
+# Adaptive Supertrend — same shape plus RawAtr/VolatilityCluster/ClusterHigh/Medium/Low; its window
+# holds raw ATR values (the K-Means training set), not True-Range entries like regular Supertrend's.
+docker exec redis-live redis-cli HGETALL "Indicator:Running:Nifty_Index_Spot:5 Minutes:Adaptive Supertrend:48:4"
+docker exec redis-live redis-cli LRANGE "Indicator:Window:Nifty_Index_Spot:5 Minutes:Adaptive Supertrend:48:4" 0 -1
 docker exec redis-live redis-cli GET "Indicator:Manifest:Active"
 
 # Pivot Central Range's hash also carries PriorClose (yesterday's raw close) alongside

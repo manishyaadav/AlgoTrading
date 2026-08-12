@@ -888,6 +888,10 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 .operand-type-row { display: flex; gap: 6px; margin-bottom: 6px; }
 .operand-type-row select { flex: 0 0 auto; }
 .operand-type-row input { flex: 1 1 auto; min-width: 0; }
+/* The indicator-name select takes the same flexible width the free-text value input has for
+   Literal/Expression — only .operand-type-select (the 3-option Indicator/Literal/Expression
+   picker) should stay narrow-auto. */
+.operand-type-row select.operand-value-select { flex: 1 1 auto; min-width: 0; }
 
 .operand-card select,
 .operand-card input[type="text"],

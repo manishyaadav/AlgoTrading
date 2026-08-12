@@ -275,6 +275,10 @@ namespace WarmUpService.Functions
                 {
                     await SeedSupertrend(logger, instrument, reason, key, bars);
                 }
+                else if (string.Equals(reason.Reference, "Adaptive Supertrend", StringComparison.OrdinalIgnoreCase))
+                {
+                    await SeedAdaptiveSupertrend(logger, instrument, reason, key, bars);
+                }
                 else
                 {
                     logger.LogWarning(
@@ -352,6 +356,51 @@ namespace WarmUpService.Functions
             logger.LogInformation(
                 "  {Instrument} {Timeframe} Supertrend({Period},{Multiplier}) — seeded from {BarCount} bar(s), Trend={Trend}, Atr={Atr} as of {AsOf}. Key: {Key}, Window: {WindowKey}",
                 instrument, reason.Timeframe, reason.Period, reason.Multiplier, bars.Count, state.TrendDirection, state.Atr, state.LastBarWindowsStartTime, key, windowKey);
+        }
+
+        private async Task SeedAdaptiveSupertrend(ILogger logger, string instrument, WarmUpReason reason, string key, List<HistoricalBar> bars)
+        {
+            var (state, window) = AdaptiveSupertrendSeeder.Seed(bars, reason.Period, reason.Multiplier);
+            if (!state.IsSeeded)
+            {
+                logger.LogWarning(
+                    "  {Instrument} {Timeframe} Adaptive Supertrend({Period},{Multiplier}) — only {BarCount} bar(s) available, need at least {Needed} (ATR length + {Window}-bar K-Means training window), cannot seed yet.",
+                    instrument, reason.Timeframe, reason.Period, reason.Multiplier, bars.Count,
+                    reason.Period + AdaptiveVolatilityClusterer.TrainingWindow, AdaptiveVolatilityClusterer.TrainingWindow);
+                return;
+            }
+
+            await _redisHelper.SetHashAsync(key, new HashEntry[]
+            {
+                new("TrendDirection", state.TrendDirection),
+                new("PrevUpperBand", state.PrevUpperBand.ToString(CultureInfo.InvariantCulture)),
+                new("PrevLowerBand", state.PrevLowerBand.ToString(CultureInfo.InvariantCulture)),
+                new("PrevClose", state.PrevClose.ToString(CultureInfo.InvariantCulture)),
+                new("Atr", state.Atr.ToString(CultureInfo.InvariantCulture)),
+                new("RawAtr", state.RawAtr.ToString(CultureInfo.InvariantCulture)),
+                new("VolatilityCluster", state.VolatilityCluster),
+                new("ClusterHigh", state.ClusterHigh.ToString(CultureInfo.InvariantCulture)),
+                new("ClusterMedium", state.ClusterMedium.ToString(CultureInfo.InvariantCulture)),
+                new("ClusterLow", state.ClusterLow.ToString(CultureInfo.InvariantCulture)),
+                new("IsSeeded", "true"),
+                new("LastBarWindowsStartTime", state.LastBarWindowsStartTime?.ToString("yyyy-MM-ddTHH:mm:ss") ?? ""),
+            }, TimeSpan.FromDays(IndicatorStateTtlDays));
+
+            // The rolling raw-ATR window — the K-Means training set, the "List" half of this
+            // indicator's hybrid persistence (same mechanism as regular Supertrend's True-Range
+            // window). Cleared and rebuilt in chronological order rather than pushed incrementally,
+            // since a seed run always has the full window available at once.
+            string windowKey = $"Indicator:Window:{instrument}:{reason.Timeframe}:{reason.Reference}:{reason.Period}:{reason.Multiplier}";
+            await _redisHelper.DeleteKeyAsync(windowKey);
+            foreach (var entry in window)
+            {
+                string json = JsonSerializer.Serialize(entry);
+                await _redisHelper.PushToListAsync(windowKey, json, AdaptiveVolatilityClusterer.TrainingWindow, TimeSpan.FromDays(IndicatorStateTtlDays));
+            }
+
+            logger.LogInformation(
+                "  {Instrument} {Timeframe} Adaptive Supertrend({Period},{Multiplier}) — seeded from {BarCount} bar(s), Trend={Trend}, Cluster={Cluster} (Atr={Atr}, raw={RawAtr}) as of {AsOf}. Key: {Key}, Window: {WindowKey}",
+                instrument, reason.Timeframe, reason.Period, reason.Multiplier, bars.Count, state.TrendDirection, state.VolatilityCluster, state.Atr, state.RawAtr, state.LastBarWindowsStartTime, key, windowKey);
         }
 
         private async Task WriteManifestAsync(ILogger logger, List<ActiveIndicatorInstance> manifest)

@@ -102,6 +102,9 @@ namespace StrategyService.Engine
             if (string.Equals(reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
                 return new($"supertrend:{key}", $"Supertrend (P{props.Period} ×{props.Multiplier})", scope, "indicator");
 
+            if (string.Equals(reference, "Adaptive Supertrend", StringComparison.OrdinalIgnoreCase))
+                return new($"adaptive-supertrend:{key}", $"Adaptive Supertrend (P{props.Period} ×{props.Multiplier})", scope, "indicator");
+
             if (string.Equals(reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase))
                 return new($"pcr:{key}", "Pivot Central Range", scope, "indicator");
 
@@ -431,6 +434,39 @@ namespace StrategyService.Engine
                     Fields: fields,
                     // The card shows the band and the trend as separate facts; the rule row shows
                     // them fused because that's how the comparison uses them.
+                    SourceValue: FormatNumber(value),
+                    SourceDetail: color != null ? $"{direction} → {color}" : direction);
+            }
+
+            if (string.Equals(reference, "Adaptive Supertrend", StringComparison.OrdinalIgnoreCase))
+            {
+                string key = LiveDataSnapshot.IndicatorKey(props.Instrument, props.Timeframe, "Adaptive Supertrend", props.Period, props.Multiplier);
+                var hash = await live.GetIndicatorHashAsync(props.Instrument, props.Timeframe, "Adaptive Supertrend", props.Period, props.Multiplier);
+                if (hash == null || hash.GetValueOrDefault("IsSeeded") != "true")
+                    return Resolved.Unresolved($"Adaptive Supertrend({props.Period},{props.Multiplier}) on {props.Instrument} {props.Timeframe}: not seeded yet", key);
+
+                string direction = hash.GetValueOrDefault("TrendDirection") ?? "";
+                string? color = direction switch { "Up" => "GREEN", "Down" => "RED", _ => null };
+                string bandField = direction == "Down" ? "PrevUpperBand" : "PrevLowerBand";
+                if (!decimal.TryParse(hash.GetValueOrDefault(bandField), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+                    return Resolved.Unresolved($"Adaptive Supertrend({props.Period},{props.Multiplier}): value unreadable", key);
+
+                string display = color != null ? $"{FormatNumber(value)} ({direction}→{color})" : FormatNumber(value);
+
+                // Atr here is the K-Means-ASSIGNED volatility centroid actually driving the bands,
+                // same field name regular Supertrend uses (so the rule row's existing ATR-scaled
+                // distance-to-flipping bar works for this indicator too, unchanged, on the frontend).
+                // RawAtr/VolatilityCluster are included alongside it so the evidence trail also shows
+                // what was actually measured before clustering smoothed it, and which regime it was
+                // classified into.
+                var fields = Evidence(hash, "TrendDirection", "PrevUpperBand", "PrevLowerBand", "Atr", "RawAtr", "VolatilityCluster", "PrevClose");
+                fields.Insert(1, new EvidenceField("band used", $"{bandField} (direction is {(direction == "" ? "—" : direction)})"));
+
+                return new Resolved(display, value, color, null,
+                    Kind: "indicator",
+                    Source: key,
+                    AsOf: hash.GetValueOrDefault("LastBarWindowsStartTime"),
+                    Fields: fields,
                     SourceValue: FormatNumber(value),
                     SourceDetail: color != null ? $"{direction} → {color}" : direction);
             }

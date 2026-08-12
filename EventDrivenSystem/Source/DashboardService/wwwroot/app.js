@@ -935,6 +935,14 @@ const OPERAND_TYPES = ["Indicator", "Literal", "Expression"];
 const OPERATORS = ["==", "!=", "<", "<=", ">", ">="];
 const LINK_OPTIONS = ["", "AND", "OR"];
 
+// Every indicator type this stack actually has a live calculator for (StrategyService's
+// RuleEvaluator.cs — one ClassifySource/ResolveIndicatorAsync branch per name here). An Indicator
+// operand's name is picked from this list, not typed — a hand-typed name with no evaluator behind
+// it would just silently sit unresolved forever with no obvious reason why. Period/Multiplier/
+// Timeframe/Instrument stay free-form: those are per-instance parameters (which EMA period, which
+// underlying), not a fixed vocabulary the way the indicator name itself is.
+const INDICATOR_NAMES = ["EMA", "Supertrend", "Adaptive Supertrend", "Pivot Central Range"];
+
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -956,10 +964,21 @@ function instrumentOptionsHtml(currentValue) {
     options.map(v => `<option value="${esc(v)}" ${v === currentValue ? "selected" : ""}>${esc(v)}</option>`).join("");
 }
 
+// Indicator's name comes from INDICATOR_NAMES — an out-of-set value (e.g. a strategy authored
+// before some indicator existed, or hand-edited) is kept as an extra option rather than silently
+// dropped, same "don't lose data, just show the odd-one-out" rule instrumentOptionsHtml already
+// follows below.
+function indicatorNameOptionsHtml(currentValue) {
+  const options = !currentValue || INDICATOR_NAMES.includes(currentValue) ? INDICATOR_NAMES : [...INDICATOR_NAMES, currentValue];
+  return `<option value="">(select)</option>` +
+    options.map(v => `<option value="${esc(v)}" ${v === currentValue ? "selected" : ""}>${esc(v)}</option>`).join("");
+}
+
 function operandCardHtml(side, operand) {
   const o = operand || emptyOperand();
   const p = o.properties || {};
   const hideProps = o.type === "Literal";
+  const isIndicator = o.type === "Indicator";
   return `
     <div class="operand-card" data-side="${side}">
       <div class="operand-label">${side === "left" ? "Left Operand" : "Right Operand"}</div>
@@ -967,7 +986,8 @@ function operandCardHtml(side, operand) {
         <select class="operand-type-select">
           ${OPERAND_TYPES.map(t => `<option value="${t}" ${o.type === t ? "selected" : ""}>${t}</option>`).join("")}
         </select>
-        <input type="text" class="operand-value-input" value="${esc(o.value)}" placeholder="e.g. Supertrend / Allocated Capital">
+        <select class="operand-value-select" ${isIndicator ? "" : "hidden"}>${indicatorNameOptionsHtml(o.value)}</select>
+        <input type="text" class="operand-value-input" ${isIndicator ? "hidden" : ""} value="${esc(o.value)}" placeholder="e.g. Allocated Capital / 0.02 * Allocated Capital">
       </div>
       <div class="operand-props-grid" ${hideProps ? "hidden" : ""}>
         <input type="number" class="prop-period" placeholder="Period" value="${p.period ?? ""}">
@@ -1035,7 +1055,9 @@ function renderRuleSection(key) {
 
 function readOperandFromCard(card) {
   const type = card.querySelector(".operand-type-select").value;
-  const value = card.querySelector(".operand-value-input").value.trim();
+  const value = type === "Indicator"
+    ? card.querySelector(".operand-value-select").value.trim()
+    : card.querySelector(".operand-value-input").value.trim();
 
   if (type === "Literal") {
     return { type, value, properties: null };
@@ -1954,8 +1976,14 @@ document.getElementById("strategy-panel").addEventListener("click", e => {
 
 document.getElementById("strategy-panel").addEventListener("change", e => {
   if (e.target.classList.contains("operand-type-select")) {
-    const propsGrid = e.target.closest(".operand-card").querySelector(".operand-props-grid");
-    propsGrid.hidden = e.target.value === "Literal";
+    const card = e.target.closest(".operand-card");
+    const isIndicator = e.target.value === "Indicator";
+    card.querySelector(".operand-props-grid").hidden = e.target.value === "Literal";
+    // Switching Type changes what "value" even means (an indicator name vs. a literal/expression
+    // string) — the two fields intentionally don't carry a value across that switch, same as the
+    // props grid already doesn't try to preserve Period/Multiplier when switching to Literal.
+    card.querySelector(".operand-value-select").hidden = !isIndicator;
+    card.querySelector(".operand-value-input").hidden = isIndicator;
     return;
   }
 

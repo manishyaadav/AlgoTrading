@@ -25,6 +25,7 @@ namespace AggregatorFunctions.Indicators
 
         private const string EmaTopic = "live-indicator-ema-topic";
         private const string SupertrendTopic = "live-indicator-supertrend-topic";
+        private const string AdaptiveSupertrendTopic = "live-indicator-adaptive-supertrend-topic";
 
         public IndicatorDispatcher(ILogger logger, IProducer<string, string> producer, RedisHelper redisHelper)
         {
@@ -65,6 +66,18 @@ namespace AggregatorFunctions.Indicators
                         continue;
                     }
                     await PublishAsync(SupertrendTopic, instance, result.Value.Value, result.Value.Direction, bar.WindowsStartTime);
+                }
+                else if (string.Equals(instance.Reference, "Adaptive Supertrend", StringComparison.OrdinalIgnoreCase))
+                {
+                    var result = await AdaptiveSupertrendCalculator.UpdateAsync(
+                        _redisHelper, RunningKey(instance), WindowKey(instance), instance.Period, instance.Multiplier,
+                        bar.High, bar.Low, bar.Close, bar.WindowsStartTime, IndicatorStateTtlDays);
+                    if (result == null)
+                    {
+                        _logger.LogInformation("Adaptive Supertrend {Instrument} {Timeframe}({Period},{Multiplier}) — not seeded yet, skipping live update.", instance.Instrument, instance.Timeframe, instance.Period, instance.Multiplier);
+                        continue;
+                    }
+                    await PublishAsync(AdaptiveSupertrendTopic, instance, result.Value.Value, result.Value.Direction, bar.WindowsStartTime);
                 }
                 // Pivot Central Range never appears in the manifest — WarmUpService deliberately
                 // excludes it (no live phase per the plan doc), so no branch is needed for it here.
