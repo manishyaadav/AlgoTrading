@@ -244,9 +244,35 @@ namespace StrategyService.Backtest
             decimal entryPrice = 0;
             DateTime entryTime = default;
 
+            // Intraday strategies never carry a position past the square-off window — without this,
+            // a position with no ExitRules condition that happens to fire just rides forever (real
+            // bug, caught by actually running this against Accumulation: a Short opened 16 Jun sat
+            // open, unexited, all the way to 12 Aug). 15:15 IST, the start of NSE's own Pre-Close
+            // window, is the simple deterministic version of "square off in the 15:15-15:29 window"
+            // — exits at that bar's OPEN (the position is flat before anything else in that bar
+            // happens), not a scan for the single best moment inside the window. CarryOver
+            // strategies (TradeType != "Intraday") are exempt on purpose — holding overnight is the
+            // point for those.
+            bool isIntraday = string.Equals(ts.TradeType, "Intraday", StringComparison.OrdinalIgnoreCase);
+            var squareOffTime = new TimeSpan(15, 15, 0);
+
             for (int i = 0; i < finestBars.Count; i++)
             {
                 var bar = finestBars[i];
+                bool pastSquareOff = isIntraday && bar.WindowsStartTime.TimeOfDay >= squareOffTime;
+
+                if (pastSquareOff && positionSide != null)
+                {
+                    decimal exitPrice = bar.Open;
+                    decimal pnl = positionSide == "Long" ? exitPrice - entryPrice : entryPrice - exitPrice;
+                    trades.Add(new BacktestTrade(positionSide, entryTime, entryPrice, bar.WindowsStartTime, exitPrice, pnl,
+                        "Intraday square-off (15:15)", false));
+                    positionSide = null;
+                }
+
+                // No new entries once the square-off window has started either — a fresh position
+                // with minutes left before it would be forced flat again isn't a real intraday trade.
+                if (pastSquareOff) continue;
 
                 // The session gate: skip new entries entirely on a day whose Trading Session Rules
                 // don't pass (mirrors what a real execution engine would do — the live Rule Engine
