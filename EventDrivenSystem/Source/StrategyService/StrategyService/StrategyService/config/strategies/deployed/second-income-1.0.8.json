@@ -1,0 +1,388 @@
+{
+  "Exchange": "NSE",
+  "StrategyName": "Second Incomee",
+  "Version": "1.0.8",
+  "DeployedVersion": "1.0.8",
+  "Broker": "Zerodha",
+  "Goals": [
+    "Second Income"
+  ],
+  "Strategies": [
+    {
+      "Risk": "Moderate",
+      "Instruments": [
+        "Nifty 50 Options"
+      ],
+      "Moneyness": "ITM",
+      "TradeType": "Intraday",
+      "TradingSessionRules": [
+        {
+          "Sequence": 1,
+          "LeftOperand": {
+            "Type": "Indicator",
+            "Value": "Pivot Central Range",
+            "Properties": {
+              "Period": 0,
+              "Multiplier": 0,
+              "Timeframe": "1 Day",
+              "Instrument": "Nifty_Index_Spot"
+            }
+          },
+          "Operator": "\u003C",
+          "RightOperand": {
+            "Type": "Expression",
+            "Value": "0.0038 * Closing Price",
+            "Properties": {
+              "Period": 0,
+              "Multiplier": 0,
+              "Timeframe": "1 Day",
+              "Instrument": "Nifty_Index_Spot",
+              "RelativePosition": "Previous"
+            }
+          },
+          "Link": ""
+        }
+      ],
+      "LongEntry": {
+        "EntryRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "==",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "GREEN"
+            },
+            "Link": "AND"
+          },
+          {
+            "Sequence": 2,
+            "LeftOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "\u003E",
+            "RightOperand": {
+              "Type": "Indicator",
+              "Value": "EMA",
+              "Properties": {
+                "Period": 550,
+                "Multiplier": 0,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Link": ""
+          }
+        ],
+        "RiskManagementRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Literal",
+              "Value": "Allocated Capital"
+            },
+            "Operator": "\u003E=",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "50000"
+            },
+            "Link": "AND"
+          },
+          {
+            "Sequence": 2,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Risk in Trade"
+            },
+            "Operator": "==",
+            "RightOperand": {
+              "Type": "Expression",
+              "Value": "0.02 * Allocated Capital"
+            },
+            "Link": ""
+          }
+        ],
+        "UpdateStopLossRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "!=",
+            "RightOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot",
+                "RelativePosition": "Previous"
+              }
+            },
+            "Link": ""
+          }
+        ],
+        "ExitRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Current Profit"
+            },
+            "Operator": "\u003E=",
+            "RightOperand": {
+              "Type": "Expression",
+              "Value": "5 * Initial Stop Loss"
+            },
+            "Link": "OR"
+          },
+          {
+            "Sequence": 2,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Candle Low",
+              "Properties": {
+                "Period": 0,
+                "Multiplier": 0,
+                "Timeframe": "1 Minute",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "\u003C",
+            "RightOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Link": "OR"
+          },
+          {
+            "Sequence": 3,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Trading Session State"
+            },
+            "Operator": "!=",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "Opened"
+            },
+            "Link": "OR"
+          },
+          {
+            "Sequence": 4,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Time in Trade"
+            },
+            "Operator": "\u003E",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "120"
+            },
+            "Link": ""
+          }
+        ]
+      },
+      "ShortEntry": {
+        "EntryRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "==",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "RED"
+            },
+            "Link": "AND"
+          },
+          {
+            "Sequence": 2,
+            "LeftOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "\u003C",
+            "RightOperand": {
+              "Type": "Indicator",
+              "Value": "EMA",
+              "Properties": {
+                "Period": 550,
+                "Multiplier": 0,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Link": ""
+          }
+        ],
+        "RiskManagementRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Literal",
+              "Value": "Allocated Capital"
+            },
+            "Operator": "\u003E=",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "50000"
+            },
+            "Link": "AND"
+          },
+          {
+            "Sequence": 2,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Risk in Trade"
+            },
+            "Operator": "\u003E=",
+            "RightOperand": {
+              "Type": "Expression",
+              "Value": "0.02 * Allocated Capital"
+            },
+            "Link": ""
+          }
+        ],
+        "UpdateStopLossRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "!=",
+            "RightOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot",
+                "RelativePosition": "Previous"
+              }
+            },
+            "Link": ""
+          }
+        ],
+        "ExitRules": [
+          {
+            "Sequence": 1,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Current Profit"
+            },
+            "Operator": "\u003E=",
+            "RightOperand": {
+              "Type": "Expression",
+              "Value": "5 * Initial Stop Loss"
+            },
+            "Link": "OR"
+          },
+          {
+            "Sequence": 2,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Candle High",
+              "Properties": {
+                "Period": 0,
+                "Multiplier": 0,
+                "Timeframe": "1 Minute",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Operator": "\u003E",
+            "RightOperand": {
+              "Type": "Indicator",
+              "Value": "Supertrend",
+              "Properties": {
+                "Period": 20,
+                "Multiplier": 4,
+                "Timeframe": "5 Minutes",
+                "Instrument": "Nifty_Index_Spot"
+              }
+            },
+            "Link": "OR"
+          },
+          {
+            "Sequence": 3,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Trading Session State"
+            },
+            "Operator": "!=",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "Opened"
+            },
+            "Link": "OR"
+          },
+          {
+            "Sequence": 4,
+            "LeftOperand": {
+              "Type": "Expression",
+              "Value": "Time in Trade"
+            },
+            "Operator": "\u003E",
+            "RightOperand": {
+              "Type": "Literal",
+              "Value": "120"
+            },
+            "Link": ""
+          }
+        ]
+      }
+    }
+  ]
+}

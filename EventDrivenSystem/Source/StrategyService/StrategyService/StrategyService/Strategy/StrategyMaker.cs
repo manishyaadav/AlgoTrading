@@ -15,19 +15,29 @@ namespace StrategyService.Strategy
 
         // On-disk filename is "{slug}-{version}.json" (e.g. second-income-1.0.2.json) — the version
         // is embedded so the folder is browsable/traceable by eye. The *slug* (no version) is the
-        // stable id used everywhere in the API/UI; the versioned filename is an internal storage
-        // detail that changes on every save/deploy (old-version file for that slug is removed, new
-        // one written) — this is NOT a version history, just one current file per strategy per folder.
+        // stable id used everywhere in the API/UI.
+        //
+        // The two folders now have DIFFERENT retention behavior, deliberately:
+        //  - deployed/ still holds exactly one current file per strategy — Deploy replaces whatever
+        //    was previously deployed, no history.
+        //  - saved/ now KEEPS every version a Save ever wrote, on purpose — earlier drafts are left
+        //    on disk for reference/rollback by hand, not auto-deleted the moment a newer one exists.
+        //    "Current" for API purposes is always the highest parsed version among however many
+        //    files exist for that slug (LatestOf/FindLatestFileForId below) — never just whichever
+        //    file a plain alphabetical sort happens to return first, which silently picks the wrong
+        //    one once a patch number reaches double digits ("1.0.10" sorts before "1.0.9" as a
+        //    string). Cleaning up superseded saved versions is a manual, explicit action (delete the
+        //    file, or DeleteById removes all of them at once) — not something a later Save does.
         private static readonly Regex VersionedFileNamePattern = new(@"^(?<slug>.+)-(?<version>\d+\.\d+\.\d+)$", RegexOptions.Compiled);
 
-        // Two separate folders, two separate lifecycles: `saved/` is the working draft — every Save
-        // overwrites it, whether or not that draft has ever been deployed. `deployed/` is a snapshot
-        // taken *at deploy time* and only ever changes when Deploy is called again — so a draft saved
-        // on top of a deployed version no longer clobbers the deployed version's actual rule content,
-        // which is exactly the gap that made the data-requirements manifest (below) inaccurate before
-        // this split existed. DeployedVersion is no longer a field persisted on the saved file — it's
-        // computed at read time from whatever's actually sitting in deployed/, so there's only one
-        // source of truth instead of two that can drift apart.
+        // Two separate folders, two separate lifecycles: `saved/` is the working draft history —
+        // every Save adds a new version, whether or not any draft has ever been deployed. `deployed/`
+        // is a snapshot taken *at deploy time* and only ever changes when Deploy is called again — so
+        // a draft saved on top of a deployed version no longer clobbers the deployed version's actual
+        // rule content, which is exactly the gap that made the data-requirements manifest (below)
+        // inaccurate before this split existed. DeployedVersion is no longer a field persisted on the
+        // saved file — it's computed at read time from whatever's actually sitting in deployed/, so
+        // there's only one source of truth instead of two that can drift apart.
         private static string SavedConfigFolder =>
             Path.Combine(AppContext.BaseDirectory, "config", "strategies", "saved");
 
@@ -41,6 +51,31 @@ namespace StrategyService.Strategy
             return match.Success ? match.Groups["slug"].Value : fileNameWithoutExtension;
         }
 
+        private static string? VersionFromFileName(string fileNameWithoutExtension)
+        {
+            var match = VersionedFileNamePattern.Match(fileNameWithoutExtension);
+            return match.Success ? match.Groups["version"].Value : null;
+        }
+
+        // Parses "major.minor.patch" into a comparable tuple; null for anything that doesn't match
+        // that shape (e.g. a hand-dropped file with no version suffix). Such files are still found by
+        // FindAllFilesForId, just never chosen as "the latest" by LatestOf since there's nothing
+        // reliable to compare them by.
+        private static (int Major, int Minor, int Patch)? ParseVersion(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version)) return null;
+            var parts = version.Split('.');
+            return parts.Length == 3
+                && int.TryParse(parts[0], out var major)
+                && int.TryParse(parts[1], out var minor)
+                && int.TryParse(parts[2], out var patch)
+                ? (major, minor, patch)
+                : null;
+        }
+
+        // Still exactly right for deployed/, which only ever holds one file per id — kept as the
+        // simple "find the one file" lookup for that folder. Do not use this against saved/ now that
+        // it can hold multiple version files per id (use FindLatestFileForId/FindAllFilesForId there).
         private static string? FindFileForId(string id, string folder)
         {
             if (!Directory.Exists(folder)) return null;
@@ -48,6 +83,31 @@ namespace StrategyService.Strategy
             return Directory.EnumerateFiles(folder, "*.json")
                 .FirstOrDefault(f => string.Equals(SlugFromFileName(Path.GetFileNameWithoutExtension(f)), sanitized, StringComparison.OrdinalIgnoreCase));
         }
+
+        private static IEnumerable<string> FindAllFilesForId(string id, string folder)
+        {
+            if (!Directory.Exists(folder)) return Enumerable.Empty<string>();
+            var sanitized = SanitizeId(id);
+            return Directory.EnumerateFiles(folder, "*.json")
+                .Where(f => string.Equals(SlugFromFileName(Path.GetFileNameWithoutExtension(f)), sanitized, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Picks the file with the highest parsed {major.minor.patch} among candidates — a plain
+        // alphabetical sort gets this wrong once a patch number reaches double digits ("1.0.10" sorts
+        // before "1.0.9" as a string). A file with no parseable version suffix sorts last rather than
+        // winning by accident.
+        private static string? LatestOf(IEnumerable<string> files)
+        {
+            return files
+                .Select(f => (File: f, Version: ParseVersion(VersionFromFileName(Path.GetFileNameWithoutExtension(f)))))
+                .OrderByDescending(c => c.Version?.Major ?? -1)
+                .ThenByDescending(c => c.Version?.Minor ?? -1)
+                .ThenByDescending(c => c.Version?.Patch ?? -1)
+                .Select(c => c.File)
+                .FirstOrDefault();
+        }
+
+        private static string? FindLatestFileForId(string id, string folder) => LatestOf(FindAllFilesForId(id, folder));
 
         private static IEnumerable<(string Id, Strategy Strategy)> LoadAllFrom(string folder)
         {
@@ -71,8 +131,31 @@ namespace StrategyService.Strategy
             }
         }
 
+        // The current saved draft for `id` is the highest-versioned file for that slug — saved/ can
+        // now hold several, and this is the one thing that decides which one counts as "the" draft
+        // (for Save's next-version computation, GetById, and DeployById).
         private static Strategy? GetSavedById(string id)
-            => LoadAllFrom(SavedConfigFolder).FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)).Strategy;
+        {
+            var file = FindLatestFileForId(id, SavedConfigFolder);
+            if (file == null) return null;
+            try
+            {
+                return JsonSerializer.Deserialize<Strategy>(File.ReadAllText(file), JsonOptions);
+            }
+            catch (JsonException)
+            {
+                return null; // malformed saved file — treat as "no draft" rather than throw
+            }
+        }
+
+        /// <summary>
+        /// The actual deployed rule content for `id`, not the saved draft — used anywhere that needs
+        /// to evaluate/describe what's really live right now (the Rule Engine page), as opposed to
+        /// GetById's "current draft, deployed version number overlaid for display" shape. Null if
+        /// nothing has ever been deployed for this id.
+        /// </summary>
+        public static Strategy? GetDeployedById(string id)
+            => LoadAllFrom(DeployedConfigFolder).FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)).Strategy;
 
         private static string? GetDeployedVersionForId(string id)
         {
@@ -88,11 +171,36 @@ namespace StrategyService.Strategy
             }
         }
 
-        /// <summary>Every saved (draft) strategy, with DeployedVersion overlaid from the deployed/ folder — not read off the saved file itself.</summary>
+        /// <summary>
+        /// Every strategy, one row per id, with DeployedVersion overlaid from the deployed/ folder —
+        /// not read off the saved file itself. saved/ can now hold multiple version files per id (see
+        /// SaveById), so this groups by slug first and surfaces only the latest version of each —
+        /// otherwise every superseded draft left on disk for reference would show up as its own row.
+        /// </summary>
         public static IEnumerable<(string Id, Strategy Strategy)> LoadAll()
         {
-            foreach (var (id, strategy) in LoadAllFrom(SavedConfigFolder))
+            if (!Directory.Exists(SavedConfigFolder)) yield break;
+
+            var bySlug = Directory.EnumerateFiles(SavedConfigFolder, "*.json")
+                .GroupBy(f => SlugFromFileName(Path.GetFileNameWithoutExtension(f)), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var group in bySlug)
             {
+                var id = group.Key;
+                var file = LatestOf(group);
+                if (file == null) continue;
+
+                Strategy? strategy;
+                try
+                {
+                    strategy = JsonSerializer.Deserialize<Strategy>(File.ReadAllText(file), JsonOptions);
+                }
+                catch (JsonException)
+                {
+                    continue; // skip a malformed file rather than failing the whole list
+                }
+                if (strategy == null) continue;
+
                 strategy.DeployedVersion = GetDeployedVersionForId(id);
                 yield return (id, strategy);
             }
@@ -108,12 +216,14 @@ namespace StrategyService.Strategy
 
         /// <summary>
         /// Validates the JSON deserializes to a Strategy, then writes it to
-        /// config/strategies/saved/{id}-{version}.json, removing whatever saved file previously held
-        /// this id (if any) so saves don't accumulate one file per version. The Version field in the
+        /// config/strategies/saved/{id}-{version}.json. Deliberately does NOT remove whatever saved
+        /// file(s) previously held this id — earlier versions are left on disk on purpose, as
+        /// reference/rollback material a person can inspect and clean up by hand once no longer
+        /// needed; a save only ever adds a file, it never deletes one. The Version field in the
         /// incoming JSON is ignored and replaced with a server-computed auto-increment (1.0.0 for a
-        /// brand new id, otherwise the existing saved file's patch version + 1) — the client can't set
-        /// an arbitrary or backwards version number. Never touches config/strategies/deployed/ — only
-        /// DeployById does.
+        /// brand new id, otherwise the latest existing saved version's patch version + 1) — the client
+        /// can't set an arbitrary or backwards version number. Never touches config/strategies/deployed/
+        /// — only DeployById does, and that folder keeps its single-current-file behavior unchanged.
         /// </summary>
         public static Strategy SaveById(string id, string json)
         {
@@ -125,9 +235,6 @@ namespace StrategyService.Strategy
             strategy.DeployedVersion = null; // not persisted here — GetById/LoadAll overlay it from deployed/ on read
 
             Directory.CreateDirectory(SavedConfigFolder);
-
-            var oldFile = FindFileForId(id, SavedConfigFolder);
-            if (oldFile != null) File.Delete(oldFile);
 
             var path = Path.Combine(SavedConfigFolder, $"{SanitizeId(id)}-{strategy.Version}.json");
             File.WriteAllText(path, JsonSerializer.Serialize(strategy, JsonOptions));
@@ -161,15 +268,20 @@ namespace StrategyService.Strategy
             return strategy;
         }
 
-        /// <summary>Deletes the strategy from both saved/ and deployed/ (whichever it's found in) — a full removal, not just the draft.</summary>
+        /// <summary>
+        /// Deletes the strategy from both saved/ and deployed/ — a full, explicit removal, distinct
+        /// from routine saving. Removes ALL saved version files for this id, not just the latest —
+        /// saved/ can hold several (see SaveById), and an explicit "delete this strategy" shouldn't
+        /// leave orphaned old drafts behind with no id left to reach them by.
+        /// </summary>
         public static bool DeleteById(string id)
         {
-            var savedFile = FindFileForId(id, SavedConfigFolder);
+            var savedFiles = FindAllFilesForId(id, SavedConfigFolder).ToList();
             var deployedFile = FindFileForId(id, DeployedConfigFolder);
 
-            if (savedFile == null && deployedFile == null) return false;
+            if (savedFiles.Count == 0 && deployedFile == null) return false;
 
-            if (savedFile != null) File.Delete(savedFile);
+            foreach (var file in savedFiles) File.Delete(file);
             if (deployedFile != null) File.Delete(deployedFile);
             return true;
         }

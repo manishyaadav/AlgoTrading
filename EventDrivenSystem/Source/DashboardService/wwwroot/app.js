@@ -67,6 +67,7 @@ const ICONS = {
   sliders: `<path d="M4 6h6M14 6h6M4 12h10M18 12h2M4 18h13M21 18h0"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="19" cy="18" r="2"/>`,
   bell: `<path d="M6.5 8.5a5.5 5.5 0 0 1 11 0c0 4.5 1.8 5.8 1.8 5.8H4.7s1.8-1.3 1.8-5.8z"/><path d="M9.7 18a2.3 2.3 0 0 0 4.6 0"/>`,
   building: `<path d="M4 21h16M6 21V6.5L12 3l6 3.5V21"/><path d="M9.5 21v-5h5v5"/><path d="M9 9h1.4M13.6 9H15M9 13h1.4M13.6 13H15"/>`,
+  pulse: `<path d="M4 12h4l2-7 4 14 2-7h4"/>`, // Rule Engine — a live signal being checked, not a static gear
 };
 
 function iconFor(composeService) {
@@ -148,6 +149,10 @@ function showPage(key) {
     loadIngestionStatus();
     loadAggregationStatus();
     loadIndicatorsStatus();
+  }
+
+  if (target === "rule-engine") {
+    loadRuleEngine();
   }
 }
 
@@ -862,6 +867,7 @@ async function refresh() {
     loadIngestionStatus(),
     loadAggregationStatus(),
     loadIndicatorsStatus(),
+    loadRuleEngine(),
   ]);
   applyPhase();
   document.getElementById("stamp").title = `Data last refreshed ${new Date().toLocaleTimeString()}`;
@@ -1128,6 +1134,455 @@ function ruleListReadonlyHtml(title, rules, titleClass = "rules-section-title") 
     </div>
   `;
 }
+
+/* ── Rule Engine page ────────────────────────────────────────────────────── */
+
+const RULE_STATUS_LABELS = { pass: "Pass", fail: "Fail", unknown: "Can't evaluate" };
+
+/* ── "Focus" redesign ────────────────────────────────────────────────────
+   Replaces the old always-show-everything spine (every gate, both sides, entry AND exit, plus an
+   interactive source rail with per-rule evidence drawers) with a single-branch view: pick a side
+   (Long/Short) and a lens (Entry/Exit/Risk), and only that branch's chain renders. The trade-off
+   is real — the old page could answer "what does the whole tree look like right now" at a glance;
+   this one answers "is THIS path armed" faster, at the cost of the others being a click away. The
+   interactive evidence-drawer/hover-linking system is gone with it, not hidden — a "Reads" strip
+   at the bottom of whatever's on screen replaces it with the plain current values, no drill-down.
+   See design-system/algotrading-dashboard/pages/rule-engine.md. */
+
+let ruleEngineLastPayload = null;
+
+// One side of a comparison, inline rather than stacked — "Supertrend 24,438.76 < EMA P550
+// 24,505.93" reads left to right the way the rule itself does. describeOperand() still carries
+// the period/timeframe/instrument detail; only the layout changed from the old two-line card.
+//
+// A literal's "resolved value" is just its own name — describeOperand(Literal "RED") already
+// prints "RED", so appending its value too would print "RED RED". Checked on the operand's own
+// type, not evidence.kind: a never-evaluated rule's evidence is always Kind "unresolved" even for
+// a literal (NotEvaluated skips resolving anything), which would otherwise show a "—" placeholder
+// implying a literal is missing data it was never going to need in the first place.
+function spineCompareHtml(rule, left, right) {
+  const val = (operand, ev) => {
+    if (!operand || operand.type === "Literal") return "";
+    return ev && ev.display ? `<span class="spine-val">${esc(ev.display)}</span>` : `<span class="spine-val none">—</span>`;
+  };
+  return `${describeOperand(rule.leftOperand)} ${val(rule.leftOperand, left)} <b>${esc(rule.operator || "")}</b> ${val(rule.rightOperand, right)} ${describeOperand(rule.rightOperand)}`;
+}
+
+// Reads the ATR off whichever side carries it (only Supertrend does). ATR is the one real
+// volatility unit available here, so it's the only scale the gap bar is ever drawn against — with
+// no ATR there's no honest scale, and the bar is simply omitted rather than invented.
+function atrFrom(...evidences) {
+  for (const ev of evidences) {
+    for (const f of (ev && ev.fields) || []) {
+      if (f.key === "Atr") {
+        const n = Number(f.value);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+    }
+  }
+  return null;
+}
+
+// The distance-to-flipping phrase — "passing by 67.17", "12.40 away from passing" — shared by the
+// spine node detail line and the compact Gates Cleared checklist summary. Text only; ruleGapHtml
+// below adds the ATR bar on top of this for the spine's own detail line.
+function ruleGapPhrase(ev) {
+  const l = ev.left && ev.left.numeric, r = ev.right && ev.right.numeric;
+  if (typeof l !== "number" || typeof r !== "number") return null;
+
+  const delta = Math.abs(l - r);
+  const fmt = delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const op = (ev.rule.operator || "").trim();
+  const equality = op === "==" || op === "!=";
+
+  if (ev.status === "pass") return equality ? (delta === 0 ? "exactly equal" : `${fmt} apart`) : `passing by ${fmt}`;
+  if (ev.status === "fail") return equality ? `${fmt} apart` : `${fmt} away from passing`;
+  return `${fmt} apart`;
+}
+
+// Only drawn when both sides genuinely resolved to numbers — a text comparison
+// (Supertrend == GREEN) has no meaningful "gap", and an unresolved side has no number at all.
+function ruleGapHtml(ev) {
+  const phrase = ruleGapPhrase(ev);
+  if (phrase == null) return "";
+
+  const delta = Math.abs(ev.left.numeric - ev.right.numeric);
+  const fmt = delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const atr = atrFrom(ev.left, ev.right);
+  let track = "";
+  if (atr) {
+    const multiples = delta / atr;
+    const pct = Math.min(multiples / 3, 1) * 100;
+    track = `
+      <div class="gap-track" title="Scale: 0 to 3× ATR (${atr.toLocaleString(undefined, { maximumFractionDigits: 2 })}), from the same Supertrend hash">
+        <div class="gap-fill ${ev.status}" style="width:${pct.toFixed(1)}%"></div>
+      </div>
+      <span class="gap-scale">${multiples.toFixed(2)}× ATR</span>`;
+  }
+
+  return `<span class="gap-delta ${ev.status}">Δ ${fmt}</span><span class="gap-phrase">${esc(phrase)}</span>${track}`;
+}
+
+// "2026-08-10T15:25:00" -> "15:25". Only ever the time-of-day part shown, never a fabricated
+// "flipped at" moment this stack has no way to actually detect (only the current running state
+// is kept, not a change history) — this is honestly "the bar this value is as of", not "when it
+// last changed".
+function formatAsOf(raw) {
+  const m = /T(\d{2}:\d{2})/.exec(raw || "");
+  return m ? m[1] : (raw || "");
+}
+
+// One line under a spine node: the numeric gap+bar for a numeric comparison, an honest
+// as-of-timestamped match/no-match for a text one (Supertrend color vs a Literal), or the
+// unresolved reason when there's nothing to compare at all.
+function spineDetailHtml(ev) {
+  if (ev.status === "unknown") {
+    return `<div class="spine-detail muted">${esc(ev.reason || "not evaluated")}</div>`;
+  }
+
+  const gap = ruleGapHtml(ev);
+  if (gap) return `<div class="spine-detail">${gap}</div>`;
+
+  const asOf = (ev.left && ev.left.asOf) || (ev.right && ev.right.asOf);
+  const phrase = ev.status === "pass" ? "Matched exactly" : "Did not match";
+  return `<div class="spine-detail">${esc(phrase)}${asOf ? ` · as of ${esc(formatAsOf(asOf))}` : ""}</div>`;
+}
+
+function spineNodeHtml(ev, key) {
+  return `
+    <div class="spine-node ${ev.status}" data-rule-key="${esc(key)}">
+      <span class="spine-dot ${ev.status}"></span>
+      <div class="spine-body">
+        <div class="spine-head">
+          <span class="spine-text">${spineCompareHtml(ev.rule, ev.left, ev.right)}</span>
+          <span class="badge status-${ev.status}">${RULE_STATUS_LABELS[ev.status] || ev.status}</span>
+        </div>
+        ${spineDetailHtml(ev)}
+      </div>
+    </div>`;
+}
+
+// items: [{ev, linkAfter}] — linkAfter is the label ("AND"/"OR"/"THEN") drawn between this node
+// and the next, or null after the last one. "THEN" marks a transition between two semantically
+// different groups chained on one spine (Entry rules -> Risk sizing, see focusPanelHtml) rather
+// than the rule's own Link, which only ever means AND/OR within a single group.
+function spineFromItemsHtml(items) {
+  if (!items.length) return `<div class="hint">No rules defined.</div>`;
+  return `<div class="spine">${items.map((item, i) => {
+    const node = spineNodeHtml(item.ev, item.key ?? i);
+    const link = item.linkAfter ? `<div class="spine-link">${esc(item.linkAfter)}</div>` : "";
+    return node + link;
+  }).join("")}</div>`;
+}
+
+function chainWithLinks(rules, scope, fallbackLink, trailingLink) {
+  return rules.map((ev, i) => ({
+    ev,
+    key: `${scope}:${ev.rule.sequence ?? i}`,
+    linkAfter: i < rules.length - 1 ? ((ev.rule.link || "").trim().toUpperCase() || fallbackLink) : (trailingLink || null),
+  }));
+}
+
+// The Entry lens shows more than just Entry Rules: whether an armed entry can actually be SIZED
+// (Risk Management) is part of "would this trade happen", not a separate question, so the two
+// groups chain on one spine with a "THEN" transition rather than living in different tabs.
+function combinedSpineForEntry(entryExit, side) {
+  const entry = chainWithLinks(entryExit.entryRules.rules, `${side}:entry`, "AND",
+    entryExit.riskManagementRules.rules.length ? "THEN" : null);
+  const risk = chainWithLinks(entryExit.riskManagementRules.rules, `${side}:risk`, "AND", null);
+  return entry.concat(risk);
+}
+
+const TAB_LABELS = { entry: "Entry", exit: "Exit", risk: "Risk" };
+
+function focusItemsFor(entryExit, side, tab) {
+  if (tab === "entry") return { items: combinedSpineForEntry(entryExit, side), group: entryExit.entryRules };
+  if (tab === "risk") return { items: chainWithLinks(entryExit.riskManagementRules.rules, `${side}:risk`, "AND", null), group: entryExit.riskManagementRules };
+  return { items: chainWithLinks(entryExit.exitBranch.rules, `${side}:exit`, "OR", null), group: entryExit.exitBranch };
+}
+
+// "N of M met" only ever counts rules that actually resolved to pass/fail — an unknown rule
+// (Risk Management, always unevaluated) isn't a miss, it's a question this stack can't answer yet,
+// so it's shown on the spine but left out of the ratio entirely rather than counted against it.
+function metPillHtml(group) {
+  if (!group.live) return `<span class="met-pill unknown">Not evaluated</span>`;
+
+  const evaluated = group.rules.filter(r => r.status === "pass" || r.status === "fail");
+  if (!evaluated.length) return `<span class="met-pill unknown">No rules to evaluate</span>`;
+
+  const met = evaluated.filter(r => r.status === "pass").length;
+  const dots = evaluated.map(r => `<span class="met-dot ${r.status}"></span>`).join("");
+  return `<span class="met-pill"><span class="met-dots">${dots}</span>${met} of ${evaluated.length} met</span>`;
+}
+
+function sideDotTone(entryExit) {
+  const s = entryExit && entryExit.entryRules && entryExit.entryRules.status;
+  return s === "pass" ? "pass" : s === "fail" ? "fail" : "unknown";
+}
+
+function sideToggleHtml(data, side) {
+  return `
+    <div class="side-toggle" role="tablist">
+      <button type="button" class="side-toggle-btn ${side === "long" ? "active" : ""}" data-side="long">
+        <span class="side-dot ${sideDotTone(data.long)}"></span>Long
+      </button>
+      <button type="button" class="side-toggle-btn ${side === "short" ? "active" : ""}" data-side="short">
+        <span class="side-dot ${sideDotTone(data.short)}"></span>Short
+      </button>
+    </div>`;
+}
+
+function tabToggleHtml(tab) {
+  return `
+    <div class="tab-toggle" role="tablist">
+      ${Object.entries(TAB_LABELS).map(([key, label]) =>
+        `<button type="button" class="tab-toggle-btn ${tab === key ? "active" : ""}" data-tab="${key}">${label}</button>`
+      ).join("")}
+    </div>`;
+}
+
+// The other half of what's on screen: not "would this pass" but "is any of it real right now".
+// Scoped to only the inputs the currently-visible spine actually reads — the full inventory (every
+// input across every side/lens) lived in the old source rail; this is deliberately just what's in
+// front of you, since that's the question a compact strip at the bottom of one view can answer.
+function readsStripHtml(sources, items) {
+  const ids = new Set();
+  items.forEach(item => (item.ev.sourceIds || []).forEach(id => ids.add(id)));
+  const list = (sources || []).filter(s => ids.has(s.id));
+  if (!list.length) return "";
+
+  return `
+    <div class="reads-strip">
+      <div class="reads-label">Reads</div>
+      <div class="reads-list">
+        ${list.map(s => `
+          <div class="read-tile">
+            <div class="read-label">${esc(s.label)}</div>
+            <div class="read-value ${s.backed ? "" : "none"}">${s.backed ? esc(s.value) : "no source"}</div>
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function focusPanelHtml(data, side, tab) {
+  const entryExit = data[side];
+  const { items, group } = focusItemsFor(entryExit, side, tab);
+
+  return `
+    <div class="focus-toolbar">
+      ${sideToggleHtml(data, side)}
+      ${tabToggleHtml(tab)}
+      ${metPillHtml(group)}
+    </div>
+    ${spineFromItemsHtml(items)}
+    ${readsStripHtml(data.sources, items)}`;
+}
+
+function gateChecklistIcon(tone) {
+  if (tone === "pass") return `<span class="gate-icon pass">✓</span>`;
+  if (tone === "fail") return `<span class="gate-icon fail">✕</span>`;
+  if (tone === "pointer") return `<span class="gate-icon pointer">↓</span>`;
+  return `<span class="gate-icon unknown">?</span>`;
+}
+
+function gateChecklistItemHtml(label, detail, tone) {
+  return `
+    <div class="gate-check-item">
+      ${gateChecklistIcon(tone)}
+      <div>
+        <div class="gate-check-label">${esc(label)}</div>
+        <div class="gate-check-detail">${esc(detail)}</div>
+      </div>
+    </div>`;
+}
+
+function dataHealthHtml(sources) {
+  const list = sources || [];
+  const backed = list.filter(s => s.backed).length;
+  const total = list.length;
+  const unbacked = total - backed;
+  const pct = total ? (backed / total) * 100 : 0;
+
+  return `
+    <div class="data-health">
+      <div class="health-head">
+        <span class="health-title">Data health</span>
+        <span class="health-count">${backed}/${total}</span>
+      </div>
+      <div class="health-bar"><div class="health-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="health-caption">${unbacked} input${unbacked === 1 ? "" : "s"} have no writer. Exit and risk rules can't evaluate until they do.</div>
+    </div>`;
+}
+
+// The trading-session-rules gate's compact summary — reuses the same gap phrase the spine uses,
+// so "passing by 113.89" means the same thing whether you're reading it in the checklist or the
+// full rule row. Only handles the shapes this stack's strategies actually have (0 or 1 session
+// rule); a strategy with several would just fall back to a plain status word, honestly.
+function tradingSessionSummary(group) {
+  if (!group.rules.length) return "No session rules configured";
+  if (group.rules.length > 1) return `${group.rules.length} rules · ${RULE_STATUS_LABELS[group.status] || group.status}`;
+  const ev = group.rules[0];
+  if (ev.status === "unknown") return ev.reason || "not evaluated";
+  return ruleGapPhrase(ev) || (ev.status === "pass" ? "Matched" : "Did not match");
+}
+
+function ruleEngineFocusHtml(data, sessionGate, side, tab) {
+  const sessionState = (sessionGate.values && sessionGate.values[0] && sessionGate.values[0].value) || "—";
+  const sessionDetail = sessionGate.status === "pass" ? `${sessionState} · gated open`
+    : sessionGate.status === "fail" ? `${sessionState} — no session today`
+    : "session state unavailable";
+
+  return `
+    <div class="identity">
+      <div class="identity-name">${esc(data.strategyName)}</div>
+      <div class="identity-meta">${esc((data.instruments || []).join(", "))}${data.exchange ? " · " + esc(data.exchange) : ""}${data.deployedVersion ? " · v" + esc(data.deployedVersion) : ""}</div>
+    </div>
+
+    <div class="focus-layout">
+      <aside class="gates-rail">
+        <div class="gates-rail-title">Gates cleared</div>
+        <div class="gates-list">
+          ${gateChecklistItemHtml("Session today", sessionDetail, sessionGate.status)}
+          ${gateChecklistItemHtml("Trading session rules", tradingSessionSummary(data.tradingSessionRules), data.tradingSessionRules.status)}
+          ${gateChecklistItemHtml("In a position", "Nothing tracks this — assumed flat", data.positionGate.status)}
+          ${gateChecklistItemHtml(`${side === "long" ? "Long" : "Short"} branch`, `${TAB_LABELS[tab]} rules evaluating`, "pointer")}
+        </div>
+        ${dataHealthHtml(data.sources)}
+      </aside>
+
+      <div class="focus-main">
+        ${focusPanelHtml(data, side, tab)}
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><span class="dot pass"></span>Pass — a real live value satisfied the condition</span>
+      <span><span class="dot fail"></span>Fail — a real live value did not satisfy it</span>
+      <span><span class="dot unknown"></span>Can't evaluate — no data source exists for this yet</span>
+      <span>The spine is the AND chain — read it top to bottom</span>
+    </div>
+  `;
+}
+
+// Which side/lens is on screen — module-level, like the strategy selection below, so a toggle
+// click survives the 5s poll and a re-render can happen instantly from cached data with no
+// network round-trip (renderRuleEngineContent below).
+let ruleEngineSide = "long";
+let ruleEngineTab = "entry";
+let ruleEngineLastData = null;
+let ruleEngineLastSessionGate = null;
+
+function renderRuleEngineContent() {
+  if (!ruleEngineLastData || !ruleEngineLastSessionGate) return;
+  document.getElementById("rule-engine-content").innerHTML =
+    ruleEngineFocusHtml(ruleEngineLastData, ruleEngineLastSessionGate, ruleEngineSide, ruleEngineTab);
+}
+
+// Toggle clicks are delegated off the page container so they survive the 5s refresh replacing
+// the DOM underneath them — bound once at load, same contract as the strategy switcher below.
+document.getElementById("rule-engine-content").addEventListener("click", ev => {
+  const sideBtn = ev.target.closest(".side-toggle-btn");
+  if (sideBtn && sideBtn.dataset.side !== ruleEngineSide) {
+    ruleEngineSide = sideBtn.dataset.side;
+    renderRuleEngineContent();
+    return;
+  }
+
+  const tabBtn = ev.target.closest(".tab-toggle-btn");
+  if (tabBtn && tabBtn.dataset.tab !== ruleEngineTab) {
+    ruleEngineTab = tabBtn.dataset.tab;
+    renderRuleEngineContent();
+  }
+});
+
+// Which deployed strategy's tree is on screen — module-level so it survives the 5s poll cycle
+// (the whole point is that switching strategies is a user action, not something a refresh should
+// reset). Reconciled against the live deployed list on every load: if the selection deployed
+// strategy disappears (undeployed/deleted), loadRuleEngine falls back to the first one available.
+let ruleEngineSelectedId = null;
+let ruleEngineSwitcherPayload = null;
+
+function strategySwitcherHtml(deployedStrategies, selectedId) {
+  if (deployedStrategies.length < 2) return ""; // one deployed strategy: a switcher has nothing to switch between
+  return deployedStrategies.map(s => `
+    <button type="button" class="strategy-chip ${s.id === selectedId ? "active" : ""}" data-strategy-id="${esc(s.id)}">
+      <span class="chip-name">${esc(s.strategyName)}</span>
+      <span class="chip-meta">${esc((s.instruments || []).join(", "))}</span>
+      <span class="badge deployed">v${esc(s.deployedVersion || "—")}</span>
+    </button>`).join("");
+}
+
+async function loadRuleEngine() {
+  const el = document.getElementById("rule-engine-content");
+  const errEl = document.getElementById("rule-engine-error");
+  const switcherEl = document.getElementById("rule-engine-switcher");
+  try {
+    // Fetched together — the session gate is the same Redis "India" state no matter which
+    // strategy ends up selected, so it doesn't wait on (or depend on) strategy selection at all.
+    const [strategies, sessionGate] = await Promise.all([
+      fetchJson(`${STRATEGY_API_BASE}/api/strategies`),
+      fetchJson(`${STRATEGY_API_BASE}/api/session-status`),
+    ]);
+    const deployed = (strategies || []).filter(s => s.deployedVersion);
+
+    if (deployed.length === 0) {
+      el.innerHTML = `<div class="hint">No deployed strategy yet — deploy one from the Strategy page first.</div>`;
+      ruleEngineLastPayload = null;
+      ruleEngineLastData = null;
+      ruleEngineLastSessionGate = null;
+      switcherEl.hidden = true;
+      switcherEl.innerHTML = "";
+      ruleEngineSwitcherPayload = null;
+      ruleEngineSelectedId = null;
+      errEl.hidden = true;
+      return;
+    }
+
+    // Stick with whatever the user picked as long as it's still deployed; otherwise (first load,
+    // or the selected one just got undeployed) fall back to the first deployed strategy.
+    if (!deployed.some(s => s.id === ruleEngineSelectedId)) {
+      ruleEngineSelectedId = deployed[0].id;
+    }
+
+    const switcherPayload = JSON.stringify({ deployed: deployed.map(s => [s.id, s.strategyName, s.deployedVersion]), selected: ruleEngineSelectedId });
+    if (switcherPayload !== ruleEngineSwitcherPayload) {
+      ruleEngineSwitcherPayload = switcherPayload;
+      switcherEl.innerHTML = strategySwitcherHtml(deployed, ruleEngineSelectedId);
+      switcherEl.hidden = deployed.length < 2;
+    }
+
+    const status = await fetchJson(`${STRATEGY_API_BASE}/api/strategies/${encodeURIComponent(ruleEngineSelectedId)}/rule-status`);
+
+    // The 5s refresh used to blow away and rebuild this whole subtree every tick, which made any
+    // interaction on the page impossible to sustain — a side/tab selection would otherwise reset
+    // every five seconds. Indicators only actually change on a bar close (5 minutes for this
+    // strategy), so the overwhelming majority of ticks are identical payloads and now touch the
+    // DOM not at all.
+    const payload = JSON.stringify({ status, sessionGate });
+    if (payload !== ruleEngineLastPayload) {
+      ruleEngineLastPayload = payload;
+      ruleEngineLastData = status;
+      ruleEngineLastSessionGate = sessionGate;
+      renderRuleEngineContent();
+    }
+    errEl.hidden = true;
+  } catch (err) {
+    errEl.hidden = false;
+    errEl.textContent = `Unable to load: ${err.message}`;
+  }
+}
+
+// Delegated the same way the toggle clicks are — bound once at load, survives the switcher being
+// re-rendered on every strategy list change.
+document.getElementById("rule-engine-switcher").addEventListener("click", ev => {
+  const chip = ev.target.closest(".strategy-chip");
+  if (!chip || chip.classList.contains("active")) return;
+
+  ruleEngineSelectedId = chip.dataset.strategyId;
+  ruleEngineLastPayload = null; // force the flow to redraw even if the new strategy's status JSON
+                                 // happens to collide with whatever was cached from the last one
+  loadRuleEngine();
+});
 
 function strategyError(message) {
   const el = document.getElementById("strategy-error");

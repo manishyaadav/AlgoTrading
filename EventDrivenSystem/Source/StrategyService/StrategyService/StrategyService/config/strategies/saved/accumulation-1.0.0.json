@@ -1,7 +1,7 @@
 {
   "Exchange": "NSE",
-  "StrategyName": "Second Income",
-  "Version": "1.0.6",
+  "StrategyName": "Accumulation",
+  "Version": "1.0.0",
   "Broker": "Zerodha",
   "Goals": [
     "Second Income"
@@ -12,35 +12,9 @@
       "Instruments": [
         "Nifty 50 Options"
       ],
+      "Moneyness": "ITM",
       "TradeType": "Intraday",
-      "TradingSessionRules": [
-        {
-          "Sequence": 1,
-          "LeftOperand": {
-            "Type": "Indicator",
-            "Value": "Pivot Central Range",
-            "Properties": {
-              "Period": 0,
-              "Multiplier": 0,
-              "Timeframe": "15 Minutes",
-              "Instrument": "Nifty_Index_Spot"
-            }
-          },
-          "Operator": "\u003C",
-          "RightOperand": {
-            "Type": "Expression",
-            "Value": "0.0038 * Closing Price",
-            "Properties": {
-              "Period": 0,
-              "Multiplier": 0,
-              "Timeframe": "1 Day",
-              "Instrument": "Nifty_Index_Spot",
-              "RelativePosition": "Previous"
-            }
-          },
-          "Link": ""
-        }
-      ],
+      "TradingSessionRules": [],
       "LongEntry": {
         "EntryRules": [
           {
@@ -49,8 +23,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot"
               }
@@ -59,31 +33,6 @@
             "RightOperand": {
               "Type": "Literal",
               "Value": "GREEN"
-            },
-            "Link": "AND"
-          },
-          {
-            "Sequence": 2,
-            "LeftOperand": {
-              "Type": "Indicator",
-              "Value": "Supertrend",
-              "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
-                "Timeframe": "5 Minutes",
-                "Instrument": "Nifty_Index_Spot"
-              }
-            },
-            "Operator": "\u003E",
-            "RightOperand": {
-              "Type": "Indicator",
-              "Value": "EMA",
-              "Properties": {
-                "Period": 550,
-                "Multiplier": 0,
-                "Timeframe": "5 Minutes",
-                "Instrument": "Nifty_Index_Spot"
-              }
             },
             "Link": ""
           }
@@ -123,8 +72,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot"
               }
@@ -134,8 +83,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot",
                 "RelativePosition": "Previous"
@@ -175,8 +124,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot"
               }
@@ -219,8 +168,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot"
               }
@@ -229,31 +178,6 @@
             "RightOperand": {
               "Type": "Literal",
               "Value": "RED"
-            },
-            "Link": "AND"
-          },
-          {
-            "Sequence": 2,
-            "LeftOperand": {
-              "Type": "Indicator",
-              "Value": "Supertrend",
-              "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
-                "Timeframe": "5 Minutes",
-                "Instrument": "Nifty_Index_Spot"
-              }
-            },
-            "Operator": "\u003C",
-            "RightOperand": {
-              "Type": "Indicator",
-              "Value": "EMA",
-              "Properties": {
-                "Period": 550,
-                "Multiplier": 0,
-                "Timeframe": "5 Minutes",
-                "Instrument": "Nifty_Index_Spot"
-              }
             },
             "Link": ""
           }
@@ -293,8 +217,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot"
               }
@@ -304,8 +228,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot",
                 "RelativePosition": "Previous"
@@ -345,8 +269,8 @@
               "Type": "Indicator",
               "Value": "Supertrend",
               "Properties": {
-                "Period": 20,
-                "Multiplier": 4,
+                "Period": 10,
+                "Multiplier": 3,
                 "Timeframe": "5 Minutes",
                 "Instrument": "Nifty_Index_Spot"
               }

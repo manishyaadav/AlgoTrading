@@ -130,4 +130,10 @@ docker exec redis-live redis-cli HGETALL "Indicator:Running:Nifty_Index_Spot:5 M
 docker exec redis-live redis-cli HGETALL "Indicator:Running:Nifty_Index_Spot:5 Minutes:Supertrend:20:4"
 docker exec redis-live redis-cli LRANGE "Indicator:Window:Nifty_Index_Spot:5 Minutes:Supertrend:20:4" 0 -1
 docker exec redis-live redis-cli GET "Indicator:Manifest:Active"
+
+# Pivot Central Range's hash also carries PriorClose (yesterday's raw close) alongside
+# Pivot/TopCentral/BottomCentral/Width/SessionDate — a byproduct of the same computation, kept
+# because StrategyService's Rule Engine page needs it to evaluate "N × Closing Price (Previous)"
+# for real (see StrategyService/README.md).
+docker exec redis-live redis-cli HGETALL "Indicator:Running:Nifty_Index_Spot:15 Minutes:Pivot Central Range:0:0"
 ```
