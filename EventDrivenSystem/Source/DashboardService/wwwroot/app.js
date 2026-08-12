@@ -2130,6 +2130,47 @@ function backtestTradesHtml(trades) {
     </div>`;
 }
 
+function backtestIndicatorLabel(series) {
+  return `${series.reference} (P${series.period}${series.multiplier ? ` ×${series.multiplier}` : ""}, ${series.timeframe})`;
+}
+
+// The indicator's own per-candle series, for actually eyeballing a rule against real data — not
+// just trusting what trade outcomes imply. Shown even when there are zero trades: that's exactly
+// when this view earns its place, letting you see whether the indicator itself is behaving as
+// expected before assuming the rule (or the engine) is wrong. Each series scrolls independently
+// (a long range at a fine timeframe can run to thousands of rows) and highlights the exact row a
+// GREEN/RED flip happens on, since that's easy to miss reading values alone.
+function backtestIndicatorSeriesHtml(seriesList) {
+  if (!seriesList || !seriesList.length) return "";
+
+  return seriesList.map(series => {
+    let prevDirection = null;
+    const rows = series.points.map(p => {
+      const isFlip = p.direction != null && prevDirection != null && p.direction !== prevDirection;
+      if (p.direction != null) prevDirection = p.direction;
+      const dirClass = p.direction === "GREEN" ? "up" : p.direction === "RED" ? "down" : "none";
+      return `
+        <tr class="${isFlip ? "flip" : ""}">
+          <td class="num">${esc(btFormatDateTime(p.time))}</td>
+          <td class="num">${Number(p.close).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+          <td class="num">${p.value != null ? Number(p.value).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</td>
+          <td><span class="dir ${dirClass}">${p.direction ? esc(p.direction) : "—"}</span></td>
+        </tr>`;
+    }).join("");
+
+    return `
+      <div class="bt-indicator-block">
+        <div class="bt-indicator-title">${esc(backtestIndicatorLabel(series))} — ${series.points.length} candles</div>
+        <div class="bt-indicator-scroll">
+          <table class="bt-indicator-table">
+            <thead><tr><th>Time</th><th>Close</th><th>Value</th><th>Direction</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join("");
+}
+
 // One switch on BacktestResponse.status — every shape the backend can honestly report (see
 // BacktestModels.cs) gets its own plain-language card; "completed" is the only one that also draws
 // stats/a trade table, and even then only when at least one trade actually happened.
@@ -2155,7 +2196,9 @@ function renderBacktestResponse(data) {
         esc(data.message))
     : btStatusHtml("○", "warn", "No trades", esc(data.message));
 
-  return summary + (hasTrades ? backtestStatsHtml(data.stats) + backtestTradesHtml(data.trades) : "");
+  return summary
+    + (hasTrades ? backtestStatsHtml(data.stats) + backtestTradesHtml(data.trades) : "")
+    + backtestIndicatorSeriesHtml(data.indicatorSeries);
 }
 
 async function runBacktest() {

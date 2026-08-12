@@ -26,11 +26,21 @@ namespace StrategyService.Backtest
         decimal MaxDrawdownPoints,
         int LongestWinStreak, int LongestLossStreak);
 
+    // One bar of one indicator's own series — Time/Close are that bar's own timeframe (e.g. a
+    // 5-min Supertrend's points are 5-min bars, not the simulation's finest tick), specifically so
+    // "the value for each candle" means each of the indicator's *own* candles, not a value repeated
+    // across every finer simulation tick in between. Value/Direction are null for whatever the
+    // indicator hasn't seeded yet (the same "honest nothing, not a guess" every other value in this
+    // codebase follows) — Direction itself is null for indicators with no GREEN/RED concept (EMA).
+    public record IndicatorSeriesPoint(DateTime Time, decimal Close, decimal? Value, string? Direction);
+
+    public record IndicatorSeriesResult(string Reference, int Period, int Multiplier, string Timeframe, List<IndicatorSeriesPoint> Points);
+
     // Status: "completed" | "insufficient-data" | "no-entry-rules" | "no-instrument" | "error"
-    // Exactly one of {Trades+Stats} or {DataAvailability} or {Message alone} is populated,
-    // depending on Status — the frontend branches on Status first, same contract as everywhere else
-    // in this codebase that returns a "here's what happened, honestly" shape rather than throwing
-    // for anything short of a genuine server error.
+    // Exactly one of {Trades+Stats+IndicatorSeries} or {DataAvailability} or {Message alone} is
+    // populated, depending on Status — the frontend branches on Status first, same contract as
+    // everywhere else in this codebase that returns a "here's what happened, honestly" shape rather
+    // than throwing for anything short of a genuine server error.
     public record BacktestResponse(
         string Status,
         string Message,
@@ -41,5 +51,6 @@ namespace StrategyService.Backtest
         DateTime EndDate,
         List<BacktestTrade>? Trades,
         BacktestStats? Stats,
-        HistoricalSufficiencyResponse? DataAvailability);
+        HistoricalSufficiencyResponse? DataAvailability,
+        List<IndicatorSeriesResult>? IndicatorSeries = null);
 }

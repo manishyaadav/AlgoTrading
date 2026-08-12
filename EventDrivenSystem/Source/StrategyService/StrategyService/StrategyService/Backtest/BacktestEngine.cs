@@ -103,12 +103,29 @@ namespace StrategyService.Backtest
             // need to know which indicator it's reading — same translation RuleEvaluator.cs does
             // live, done once here per series instead of per rule evaluation.
             var seriesByKey = new Dictionary<string, SeriesPoint?[]>();
+            // The full per-bar series, at each indicator's OWN timeframe (not the finest simulation
+            // tick — a 5-min Supertrend's points are 5-min candles, so "value for each candle"
+            // doesn't mean the same value repeated across 5 finer ticks). Returned to the frontend
+            // so a rule can actually be eyeballed against real data — exactly what surfaced the
+            // intraday-square-off gap: a flip is easy to miss from trade outcomes alone, obvious
+            // once you can see the series itself.
+            var indicatorSeriesResults = new List<IndicatorSeriesResult>();
             foreach (var r in tickReferences.Where(r => r.Kind == "Indicator" && r.TimeframeMinutes.HasValue))
             {
                 string key = SeriesKey(r);
                 if (seriesByKey.ContainsKey(key)) continue;
                 var bars = BarsFor(r.TimeframeMinutes!.Value);
-                seriesByKey[key] = BuildIndicatorSeries(r.Reference, bars, r.Period, r.Multiplier);
+                var series = BuildIndicatorSeries(r.Reference, bars, r.Period, r.Multiplier);
+                seriesByKey[key] = series;
+
+                // Pivot Central Range is a once-a-day value, not a per-candle series — pcrByDay
+                // already carries it; nothing to add here for it.
+                if (string.Equals(r.Reference, "Pivot Central Range", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var points = new List<IndicatorSeriesPoint>(bars.Count);
+                for (int i = 0; i < bars.Count; i++)
+                    points.Add(new IndicatorSeriesPoint(bars[i].WindowsStartTime, bars[i].Close, series[i]?.Numeric, series[i]?.Text));
+                indicatorSeriesResults.Add(new IndicatorSeriesResult(r.Reference!, r.Period, r.Multiplier, r.Timeframe!, points));
             }
 
             var registry = new RuleAudit();
@@ -326,7 +343,7 @@ namespace StrategyService.Backtest
 
             return new BacktestResponse("completed",
                 trades.Count == 0 ? "Ran successfully — the strategy's entry conditions never triggered in this period." : $"Simulated {trades.Count} trade(s).",
-                instrument, exchange, timeframeLabel, startDate, endDate, trades, stats, null);
+                instrument, exchange, timeframeLabel, startDate, endDate, trades, stats, null, indicatorSeriesResults);
         }
 
         private static readonly Regex MultiplierExpression = new(@"^\s*([\d.]+)\s*\*\s*Closing Price\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
