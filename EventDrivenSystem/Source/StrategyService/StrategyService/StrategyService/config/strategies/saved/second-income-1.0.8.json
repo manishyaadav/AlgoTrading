@@ -1,8 +1,7 @@
 {
   "Exchange": "NSE",
-  "StrategyName": "Second Income",
-  "Version": "1.0.7",
-  "DeployedVersion": "1.0.7",
+  "StrategyName": "Second Incomee",
+  "Version": "1.0.8",
   "Broker": "Zerodha",
   "Goals": [
     "Second Income"
@@ -13,6 +12,7 @@
       "Instruments": [
         "Nifty 50 Options"
       ],
+      "Moneyness": "ITM",
       "TradeType": "Intraday",
       "TradingSessionRules": [
         {
