@@ -101,23 +101,23 @@ namespace OHLCFunctionApp.Persistence
             }
         }
 
-        public async Task AppendManyAsync(BlobContainerClient container, string blobPath, string headerLine, IEnumerable<string> dataLines, ILogger logger)
+        public async Task MergeReplacingDateAsync(BlobContainerClient container, string blobPath, string headerLine, string datePrefix, IEnumerable<string> newDataLines, ILogger logger)
         {
-            var lines = dataLines as IReadOnlyList<string> ?? dataLines.ToList();
-            if (lines.Count == 0)
-            {
-                logger.LogInformation($"{blobPath}: no rows to append, skipping.");
-                return;
-            }
-
+            var newLines = newDataLines as IReadOnlyList<string> ?? newDataLines.ToList();
             var blobClient = container.GetBlobClient(blobPath);
-            string joinedRows = string.Join("\n", lines);
+            string matchPrefix = datePrefix + " ";
 
             for (int attempt = 1; attempt <= MaxRetries; attempt++)
             {
                 if (!await blobClient.ExistsAsync())
                 {
-                    string initialContent = headerLine + "\n" + joinedRows + "\n";
+                    if (newLines.Count == 0)
+                    {
+                        logger.LogInformation($"{blobPath}: doesn't exist yet and there's nothing to merge in, skipping.");
+                        return;
+                    }
+
+                    string initialContent = headerLine + "\n" + string.Join("\n", newLines) + "\n";
                     using var initialStream = new MemoryStream(Encoding.UTF8.GetBytes(initialContent));
 
                     try
@@ -130,7 +130,7 @@ namespace OHLCFunctionApp.Persistence
                     }
                     catch (RequestFailedException ex) when (ex.Status == 412)
                     {
-                        logger.LogInformation($"{blobPath}: lost the create race, retrying as an append (attempt {attempt}/{MaxRetries})");
+                        logger.LogInformation($"{blobPath}: lost the create race, retrying as a merge (attempt {attempt}/{MaxRetries})");
                         await Task.Delay(RetryDelayMs(attempt));
                         continue;
                     }
@@ -140,7 +140,21 @@ namespace OHLCFunctionApp.Persistence
                 {
                     var download = await blobClient.DownloadContentAsync();
                     string existing = download.Value.Content.ToString();
-                    string updated = existing.TrimEnd('\r', '\n') + "\n" + joinedRows + "\n";
+                    var existingLines = existing.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
+                    string header = existingLines.Count > 0 ? existingLines[0] : headerLine;
+
+                    // Drop any existing row for the date being merged in — a stale copy from an
+                    // earlier merge of the same day — then append the fresh rows at the end, after
+                    // whatever survived the filter. Never inserted mid-file: rows for a given day are
+                    // always contiguous at the tail already, since the monthly file only ever grows
+                    // forward in time.
+                    var keptRows = existingLines.Skip(1).Where(l => !l.StartsWith(matchPrefix, StringComparison.Ordinal)).ToList();
+
+                    var rebuilt = new List<string> { header };
+                    rebuilt.AddRange(keptRows);
+                    rebuilt.AddRange(newLines);
+
+                    string updated = string.Join("\n", rebuilt) + "\n";
                     using var stream = new MemoryStream(Encoding.UTF8.GetBytes(updated));
 
                     await blobClient.UploadAsync(stream, new BlobUploadOptions
@@ -156,7 +170,7 @@ namespace OHLCFunctionApp.Persistence
                 }
             }
 
-            throw new InvalidOperationException($"Failed to append {lines.Count} row(s) to {blobPath} after {MaxRetries} attempts due to repeated concurrent write conflicts.");
+            throw new InvalidOperationException($"Failed to merge {newLines.Count} row(s) into {blobPath} after {MaxRetries} attempts due to repeated concurrent write conflicts.");
         }
 
         private static int RetryDelayMs(int attempt) => 50 * attempt; // mild backoff, not exponential — conflicts here are expected to be rare and short-lived

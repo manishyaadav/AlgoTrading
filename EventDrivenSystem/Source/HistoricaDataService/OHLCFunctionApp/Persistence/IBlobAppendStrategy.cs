@@ -22,9 +22,14 @@ namespace OHLCFunctionApp.Persistence
         // mid-day). Used to pre-create today's daily files at NSE's Init event.
         Task EnsureHeaderAsync(BlobContainerClient container, string blobPath, string headerLine, ILogger logger);
 
-        // Bulk variant of AppendAsync — appends every line in dataLines in one read+write round trip
-        // (Simple) / one stage+commit (BlockList), not one round trip per line. headerLine is only
-        // used if blobPath doesn't exist yet. Used by the daily->monthly Close-triggered merge.
-        Task AppendManyAsync(BlobContainerClient container, string blobPath, string headerLine, IEnumerable<string> dataLines, ILogger logger);
+        // Used by the daily->monthly Close-triggered merge. Removes any existing data rows in
+        // blobPath whose date field starts with datePrefix ("dd-MM-yyyy"), then appends newDataLines
+        // at the end — makes the merge safe to re-run for the same day (e.g. a redelivered Close
+        // event, or a manual re-trigger) without doubling that day's rows: the stale copy is dropped
+        // and the fresh one lands in the same place, at the end, instead of accumulating duplicates.
+        // Always a full read+filter+rewrite in one round trip regardless of strategy — removing
+        // existing content isn't something block-staging can do incrementally, so BlockListAppendStrategy's
+        // usual never-re-transfer-existing-content property doesn't apply to this one operation.
+        Task MergeReplacingDateAsync(BlobContainerClient container, string blobPath, string headerLine, string datePrefix, IEnumerable<string> newDataLines, ILogger logger);
     }
 }

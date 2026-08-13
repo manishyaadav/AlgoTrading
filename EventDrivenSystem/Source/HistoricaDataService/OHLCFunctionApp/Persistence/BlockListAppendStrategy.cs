@@ -128,26 +128,27 @@ namespace OHLCFunctionApp.Persistence
             }
         }
 
-        // Merges N rows in one stage+commit instead of one block per row — a single new block
-        // holds the whole joined payload, then one CommitBlockList call folds it in alongside
-        // whatever committed blocks the blob already has.
-        public async Task AppendManyAsync(BlobContainerClient container, string blobPath, string headerLine, IEnumerable<string> dataLines, ILogger logger)
+        // Unlike AppendAsync, this can't use incremental block staging — removing existing rows for
+        // datePrefix means the surviving content has to be read, filtered, and rewritten as a whole,
+        // same as SimpleReuploadAppendStrategy's version of this operation. Rewritten via a plain
+        // UploadAsync (recommits the blob as a single block), not StageBlockAsync/CommitBlockListAsync.
+        public async Task MergeReplacingDateAsync(BlobContainerClient container, string blobPath, string headerLine, string datePrefix, IEnumerable<string> newDataLines, ILogger logger)
         {
-            var lines = dataLines as IReadOnlyList<string> ?? dataLines.ToList();
-            if (lines.Count == 0)
-            {
-                logger.LogInformation($"{blobPath}: no rows to append, skipping.");
-                return;
-            }
-
+            var newLines = newDataLines as IReadOnlyList<string> ?? newDataLines.ToList();
             var blobClient = container.GetBlockBlobClient(blobPath);
-            string joinedRows = string.Join("\n", lines);
+            string matchPrefix = datePrefix + " ";
 
             for (int attempt = 1; attempt <= MaxRetries; attempt++)
             {
                 if (!await blobClient.ExistsAsync())
                 {
-                    string initialContent = headerLine + "\n" + joinedRows + "\n";
+                    if (newLines.Count == 0)
+                    {
+                        logger.LogInformation($"{blobPath}: doesn't exist yet and there's nothing to merge in, skipping.");
+                        return;
+                    }
+
+                    string initialContent = headerLine + "\n" + string.Join("\n", newLines) + "\n";
                     using var initialStream = new MemoryStream(Encoding.UTF8.GetBytes(initialContent));
 
                     try
@@ -160,7 +161,7 @@ namespace OHLCFunctionApp.Persistence
                     }
                     catch (RequestFailedException ex) when (ex.Status == 412)
                     {
-                        logger.LogInformation($"{blobPath}: lost the create race, retrying as a staged append (attempt {attempt}/{MaxRetries})");
+                        logger.LogInformation($"{blobPath}: lost the create race, retrying as a merge (attempt {attempt}/{MaxRetries})");
                         await Task.Delay(RetryDelayMs(attempt));
                         continue;
                     }
@@ -168,22 +169,23 @@ namespace OHLCFunctionApp.Persistence
 
                 try
                 {
-                    var blockList = await blobClient.GetBlockListAsync(BlockListTypes.Committed);
-                    var existingBlockIds = blockList.Value.CommittedBlocks.Select(b => b.Name).ToList();
-                    var props = await blobClient.GetPropertiesAsync();
+                    var download = await blobClient.DownloadContentAsync();
+                    string existing = download.Value.Content.ToString();
+                    var existingLines = existing.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
+                    string header = existingLines.Count > 0 ? existingLines[0] : headerLine;
 
-                    int blockIdLength = existingBlockIds.Count > 0
-                        ? existingBlockIds[0].Length
-                        : DefaultBlockIdLength;
-                    string newBlockId = GenerateBlockId(blockIdLength);
+                    var keptRows = existingLines.Skip(1).Where(l => !l.StartsWith(matchPrefix, StringComparison.Ordinal)).ToList();
 
-                    using var rowStream = new MemoryStream(Encoding.UTF8.GetBytes(joinedRows + "\n"));
-                    await blobClient.StageBlockAsync(newBlockId, rowStream);
+                    var rebuilt = new List<string> { header };
+                    rebuilt.AddRange(keptRows);
+                    rebuilt.AddRange(newLines); // always appended at the end, after whatever survived the filter
 
-                    existingBlockIds.Add(newBlockId);
-                    await blobClient.CommitBlockListAsync(existingBlockIds, new CommitBlockListOptions
+                    string updated = string.Join("\n", rebuilt) + "\n";
+                    using var stream = new MemoryStream(Encoding.UTF8.GetBytes(updated));
+
+                    await blobClient.UploadAsync(stream, new BlobUploadOptions
                     {
-                        Conditions = new BlobRequestConditions { IfMatch = props.Value.ETag }
+                        Conditions = new BlobRequestConditions { IfMatch = download.Value.Details.ETag }
                     });
                     return;
                 }
@@ -194,7 +196,7 @@ namespace OHLCFunctionApp.Persistence
                 }
             }
 
-            throw new InvalidOperationException($"Failed to append {lines.Count} row(s) to {blobPath} after {MaxRetries} attempts due to repeated concurrent write conflicts.");
+            throw new InvalidOperationException($"Failed to merge {newLines.Count} row(s) into {blobPath} after {MaxRetries} attempts due to repeated concurrent write conflicts.");
         }
     }
 }

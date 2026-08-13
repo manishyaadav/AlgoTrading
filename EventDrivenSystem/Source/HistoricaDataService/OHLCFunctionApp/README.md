@@ -117,14 +117,20 @@ re-run, e.g. a manual replay or a mid-day restart).
 == Close` (15:30 IST) — NSE only, not also NFO, since NFO's own Close event lands on the same topic
 seconds later and this function already merges both `nse` and `nfo` daily files per invocation;
 reacting to both would double-merge every contract. For each of the same 4 combos, reads the day's
-daily file's data rows and bulk-appends them into the monthly file in one round trip via
-`IBlobAppendStrategy.AppendManyAsync` — not one `AppendAsync` call per row, which at ~375 1-min
-candles/day would mean that many sequential whole-file re-uploads against the monthly blob. Skips a
-contract gracefully (logs, doesn't throw) if its daily file doesn't exist that day.
+daily file's data rows and merges them into the monthly file in one round trip via
+`IBlobAppendStrategy.MergeReplacingDateAsync` — not one `AppendAsync` call per row, which at ~375
+1-min candles/day would mean that many sequential whole-file re-uploads against the monthly blob.
+Skips a contract gracefully (logs, doesn't throw) if its daily file doesn't exist that day.
 
-Known limitation, matching the same risk `LiveCandlePersistenceFunction` already accepts for a
-redelivered candle event: no guard against a redelivered Close event re-merging the same day's rows
-a second time. The daily file is left in place after a successful merge, not deleted.
+**Idempotent by date, not a blind append**: `MergeReplacingDateAsync` first drops any existing
+monthly rows whose date matches the day being merged, then appends the fresh daily rows at the end
+(never inserted mid-file — a given day's rows are always already contiguous at the tail, since the
+monthly file only grows forward in time). So a redelivered Close event, or a manual re-trigger for
+testing, safely replaces that day's rows in place instead of doubling them. The one case this
+deliberately does *not* self-heal: if a daily file exists but has zero data rows (something upstream
+went wrong), the merge skips entirely rather than wiping out whatever real rows monthly already has
+for that date on the strength of an empty daily file — see `DailyToMonthlyMergeFunction.cs`. The
+daily file itself is left in place after a successful merge, not deleted.
 
 ### Write strategy — configurable, not hardcoded
 
