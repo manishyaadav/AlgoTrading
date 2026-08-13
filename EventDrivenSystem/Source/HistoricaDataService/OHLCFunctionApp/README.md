@@ -1,8 +1,9 @@
 # OHLC Function App
 
-Blob storage (`azurite-live`) backend for historical OHLC data — an HTTP query API (below), plus one
-Kafka consumer that keeps Azurite in sync with the live 1-min feed instead of relying on a manual
-after-hours upload (see **Kafka consumers**, further down).
+Blob storage (`azurite-live`) backend for historical OHLC data — an HTTP query API (below), plus
+three Kafka consumers that keep Azurite in sync with the live 1-min feed and the exchange session's
+own timing, instead of relying on a manual after-hours upload (see **Kafka consumers**, further
+down).
 
 ## HTTP routes
 
@@ -59,11 +60,18 @@ curl "http://localhost:8092/api/GetOHLCDataByDate?date=2026-08-03&exchange=nse&i
 
 > **Blob layout has two tiers, and both routes above correctly use the permanent one.** For the
 > current month, day-level folders (`{year}/{month}/{day}/{blobName}.csv`) hold that day's data —
-> but they're transient, purged once the month completes. The same-named file directly under the
-> month folder (`{year}/{month}/{blobName}.csv`, no day segment — what these two routes and
+> this is now the **live write target**: `LiveCandlePersistenceFunction` appends every candle here
+> through the day, `DailyFileWarmUpFunction` pre-creates the file (header only) at NSE's 09:00 Init,
+> and `DailyToMonthlyMergeFunction` merges the day's rows forward into the monthly file at NSE's
+> 15:30 Close (see **Kafka consumers** below). The daily file is left in place after that merge —
+> purging it once the month completes is still not implemented anywhere, despite that being the
+> long-standing intent. The same-named file directly under the month folder
+> (`{year}/{month}/{blobName}.csv`, no day segment — what these two routes and
 > `HistoricalSufficiency` below all read) is cumulative for the whole month and is the permanent
-> record, kept forever. `DataAvailableTill` (below) walks the day-level folders, so it only ever
-> reflects the last few days, not full history — don't use it to conclude older data is missing.
+> record, kept forever; during the trading day it only reflects data through the *previous* day's
+> Close merge, not today's candles yet. `DataAvailableTill` (below) walks the day-level folders, so
+> it only ever reflects the last few days, not full history — don't use it to conclude older data is
+> missing.
 
 **`GET|POST /api/DataAvailableTill`** — no params, returns the latest available date per exchange
 by walking the current month's day-level folders. Since those are transient (see above), this
@@ -80,9 +88,10 @@ curl "http://localhost:8092/api/DataAvailableTill"
 `live-ohlc-azurite-persistence-consumer`, so it doesn't interfere with the 5-min aggregator or
 `NotificationService`, which already read the same topic) and appends every 1-min candle to
 Azurite, in the exact same shape the HTTP routes above read: header
-`Date,Open,Low,High,Close,Volume`, date as `dd-MM-yyyy HH:mm:ss`, path
-`{basePath}/{year}/{month}/{blobName}.csv` (see `BlobPathHelper.cs`) — always the candle's own
-month/contract, resolved the same way `GetOHLCByYearAndMonth` resolves it.
+`Date,Open,Low,High,Close,Volume`, date as `dd-MM-yyyy HH:mm:ss`. Writes only to the **daily** path
+`{basePath}/{year}/{month}/{day}/{blobName}.csv` (see `BlobPathHelper.GetDailyBlobPath`) — always
+the candle's own day/month/contract. The monthly file is never touched by this function; see
+`DailyToMonthlyMergeFunction` below for how it gets updated.
 
 The live feed's ticker (`"NIFTY"`, `"BANKNIFTY"` — see `NotificationService`'s
 `DataIngestion:TradingView:*` Redis keys) carries no exchange/instrument-type marker; it represents
@@ -94,6 +103,28 @@ this topic — not just new candles going forward — so it backfills Azurite wi
 history the topic still has retained, then settles into real-time as it catches up. Confirmed live:
 processed a multi-day backlog and landed exactly on today's most recent candle within about 30
 seconds.
+
+**`DailyFileWarmUpFunction`** — consumes `live-exchange-workflow-topic` (own consumer group
+`live-ohlc-daily-file-warmup-consumer`), filtered to `ExchangeName == "NSE" && ExchangeTimerAction
+== Init` (same filter idiom `WarmUpService`'s `WarmUpOnExchangeInit` uses for the same topic).
+Pre-creates today's 4 daily files — NIFTY and BANKNIFTY, each on `nse` and `nfo` — with just their
+header row via `IBlobAppendStrategy.EnsureHeaderAsync`, so the first live candle of the day is a
+plain append instead of racing to create the blob. A no-op per file if it already exists (safe to
+re-run, e.g. a manual replay or a mid-day restart).
+
+**`DailyToMonthlyMergeFunction`** — consumes the same topic (own consumer group
+`live-ohlc-daily-monthly-merge-consumer`), filtered to `ExchangeName == "NSE" && ExchangeTimerAction
+== Close` (15:30 IST) — NSE only, not also NFO, since NFO's own Close event lands on the same topic
+seconds later and this function already merges both `nse` and `nfo` daily files per invocation;
+reacting to both would double-merge every contract. For each of the same 4 combos, reads the day's
+daily file's data rows and bulk-appends them into the monthly file in one round trip via
+`IBlobAppendStrategy.AppendManyAsync` — not one `AppendAsync` call per row, which at ~375 1-min
+candles/day would mean that many sequential whole-file re-uploads against the monthly blob. Skips a
+contract gracefully (logs, doesn't throw) if its daily file doesn't exist that day.
+
+Known limitation, matching the same risk `LiveCandlePersistenceFunction` already accepts for a
+redelivered candle event: no guard against a redelivered Close event re-merging the same day's rows
+a second time. The daily file is left in place after a successful merge, not deleted.
 
 ### Write strategy — configurable, not hardcoded
 
@@ -169,7 +200,7 @@ Note: this Dockerfile uses a single-stage `dotnet publish` (no separate SDK/runt
 | `AzureWebJobsStorage` | points at `azurite-live` |
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` |
 | `ASPNETCORE_ENVIRONMENT` | `docker` |
-| `KAFKA_BROKER_URL` | `kafka-live:29092` — needed by `LiveCandlePersistenceFunction` |
+| `KAFKA_BROKER_URL` | `kafka-live:29092` — needed by `LiveCandlePersistenceFunction`, `DailyFileWarmUpFunction`, `DailyToMonthlyMergeFunction` |
 | `BLOB_APPEND_STRATEGY` | `Simple` or `BlockList` — see **Kafka consumers** above |
 
-The HTTP routes are read-only against whatever's already in `azurite-live`. `LiveCandlePersistenceFunction` is the write path — it's what keeps that data current now, instead of a manual after-hours upload.
+The HTTP routes are read-only against whatever's already in `azurite-live`. `LiveCandlePersistenceFunction`, `DailyFileWarmUpFunction`, and `DailyToMonthlyMergeFunction` are the write path — together they keep both the daily and monthly files current now, instead of a manual after-hours upload.

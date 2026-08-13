@@ -9,6 +9,11 @@ namespace OHLCFunctionApp
     // resolving by keeping this one shared version rather than re-duplicating.
     public static class BlobPathHelper
     {
+        // Single source of truth for the CSV header — was a private duplicate inside
+        // LiveCandlePersistenceFunction; now also read by DailyFileWarmUpFunction and
+        // DailyToMonthlyMergeFunction, so it lives next to the path-building logic it's paired with.
+        public const string HeaderLine = "Date,Open,Low,High,Close,Volume";
+
         public static string GetBasePath(string exchangeName) =>
             exchangeName.ToLower() == "nfo" ? "exchanges/nfo/futures/indices/" : "exchanges/nse/indices/";
 
@@ -44,5 +49,11 @@ namespace OHLCFunctionApp
 
         public static string GetBlobPath(DateTime date, string exchangeName, string instrumentName) =>
             $"{GetBasePath(exchangeName)}{date.Year}/{date.Month}/{GetBlobName(date, exchangeName, instrumentName)}.csv";
+
+        // Daily counterpart of GetBlobPath — one file per contract per day, holding only that day's
+        // rows. Unpadded year/month/day segments, matching DataAvailableTillDate.cs's "yyyy/M/d"
+        // parse format and the legacy MinDataConverterFunction's write convention exactly.
+        public static string GetDailyBlobPath(DateTime date, string exchangeName, string instrumentName) =>
+            $"{GetBasePath(exchangeName)}{date.Year}/{date.Month}/{date.Day}/{GetBlobName(date, exchangeName, instrumentName)}.csv";
     }
 }

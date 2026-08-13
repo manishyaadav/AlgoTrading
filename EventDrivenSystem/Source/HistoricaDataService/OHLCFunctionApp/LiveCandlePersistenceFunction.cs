@@ -12,8 +12,13 @@ namespace OHLCFunctionApp
 {
     // Keeps Azurite in sync with the live 1-min feed, instead of relying on a manual after-hours
     // upload — same blob structure GetOHLCByYearAndMonth/GetOHLCDataByDate/HistoricalSufficiency
-    // already read: header "Date,Open,Low,High,Close,Volume", date as dd-MM-yyyy HH:mm:ss, one
-    // file per month/contract at {basePath}/{year}/{month}/{blobName}.csv (see BlobPathHelper).
+    // already read: header "Date,Open,Low,High,Close,Volume", date as dd-MM-yyyy HH:mm:ss.
+    //
+    // Writes only to the DAILY file at {basePath}/{year}/{month}/{day}/{blobName}.csv (see
+    // BlobPathHelper.GetDailyBlobPath) — the monthly file is never touched here. DailyFileWarmUpFunction
+    // pre-creates today's daily files (header only) at NSE's Init event, and DailyToMonthlyMergeFunction
+    // merges each day's daily file into its monthly counterpart at NSE's Close event, so the monthly
+    // file only gets one bulk update per day instead of one re-upload per candle.
     //
     // The live feed's ticker (e.g. "NIFTY") carries no exchange/instrument-type marker — confirmed
     // this represents both the NSE spot index and the NFO front-month future simultaneously, so
@@ -23,8 +28,6 @@ namespace OHLCFunctionApp
         private readonly ILogger<LiveCandlePersistenceFunction> _logger;
         private readonly BlobServiceClient _blobServiceClient;
         private readonly IBlobAppendStrategy _appendStrategy;
-
-        private const string HeaderLine = "Date,Open,Low,High,Close,Volume";
 
         public LiveCandlePersistenceFunction(BlobServiceClient blobServiceClient, IBlobAppendStrategy appendStrategy, ILogger<LiveCandlePersistenceFunction> logger)
         {
@@ -81,10 +84,10 @@ namespace OHLCFunctionApp
 
             foreach (var exchange in new[] { "nse", "nfo" })
             {
-                string blobPath = BlobPathHelper.GetBlobPath(candle.WindowsStartTime, exchange, candle.Ticker);
+                string blobPath = BlobPathHelper.GetDailyBlobPath(candle.WindowsStartTime, exchange, candle.Ticker);
                 try
                 {
-                    await _appendStrategy.AppendAsync(container, blobPath, HeaderLine, dataLine, _logger);
+                    await _appendStrategy.AppendAsync(container, blobPath, BlobPathHelper.HeaderLine, dataLine, _logger);
                     _logger.LogInformation($"Persisted {candle.Ticker} {candle.WindowsStartTime:yyyy-MM-dd HH:mm} to {blobPath}");
                 }
                 catch (Exception ex)

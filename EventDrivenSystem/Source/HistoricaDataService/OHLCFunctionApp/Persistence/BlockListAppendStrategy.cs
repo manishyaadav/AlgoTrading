@@ -4,6 +4,7 @@ using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -102,5 +103,98 @@ namespace OHLCFunctionApp.Persistence
         }
 
         private static int RetryDelayMs(int attempt) => 50 * attempt;
+
+        public async Task EnsureHeaderAsync(BlobContainerClient container, string blobPath, string headerLine, ILogger logger)
+        {
+            var blobClient = container.GetBlockBlobClient(blobPath);
+            if (await blobClient.ExistsAsync())
+            {
+                logger.LogInformation($"{blobPath}: already exists, header ensure is a no-op.");
+                return;
+            }
+
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(headerLine + "\n"));
+            try
+            {
+                await blobClient.UploadAsync(stream, new BlobUploadOptions
+                {
+                    Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All }
+                });
+                logger.LogInformation($"{blobPath}: created with header row.");
+            }
+            catch (RequestFailedException ex) when (ex.Status == 412)
+            {
+                logger.LogInformation($"{blobPath}: lost the create race, blob already exists — no-op.");
+            }
+        }
+
+        // Merges N rows in one stage+commit instead of one block per row — a single new block
+        // holds the whole joined payload, then one CommitBlockList call folds it in alongside
+        // whatever committed blocks the blob already has.
+        public async Task AppendManyAsync(BlobContainerClient container, string blobPath, string headerLine, IEnumerable<string> dataLines, ILogger logger)
+        {
+            var lines = dataLines as IReadOnlyList<string> ?? dataLines.ToList();
+            if (lines.Count == 0)
+            {
+                logger.LogInformation($"{blobPath}: no rows to append, skipping.");
+                return;
+            }
+
+            var blobClient = container.GetBlockBlobClient(blobPath);
+            string joinedRows = string.Join("\n", lines);
+
+            for (int attempt = 1; attempt <= MaxRetries; attempt++)
+            {
+                if (!await blobClient.ExistsAsync())
+                {
+                    string initialContent = headerLine + "\n" + joinedRows + "\n";
+                    using var initialStream = new MemoryStream(Encoding.UTF8.GetBytes(initialContent));
+
+                    try
+                    {
+                        await blobClient.UploadAsync(initialStream, new BlobUploadOptions
+                        {
+                            Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All }
+                        });
+                        return;
+                    }
+                    catch (RequestFailedException ex) when (ex.Status == 412)
+                    {
+                        logger.LogInformation($"{blobPath}: lost the create race, retrying as a staged append (attempt {attempt}/{MaxRetries})");
+                        await Task.Delay(RetryDelayMs(attempt));
+                        continue;
+                    }
+                }
+
+                try
+                {
+                    var blockList = await blobClient.GetBlockListAsync(BlockListTypes.Committed);
+                    var existingBlockIds = blockList.Value.CommittedBlocks.Select(b => b.Name).ToList();
+                    var props = await blobClient.GetPropertiesAsync();
+
+                    int blockIdLength = existingBlockIds.Count > 0
+                        ? existingBlockIds[0].Length
+                        : DefaultBlockIdLength;
+                    string newBlockId = GenerateBlockId(blockIdLength);
+
+                    using var rowStream = new MemoryStream(Encoding.UTF8.GetBytes(joinedRows + "\n"));
+                    await blobClient.StageBlockAsync(newBlockId, rowStream);
+
+                    existingBlockIds.Add(newBlockId);
+                    await blobClient.CommitBlockListAsync(existingBlockIds, new CommitBlockListOptions
+                    {
+                        Conditions = new BlobRequestConditions { IfMatch = props.Value.ETag }
+                    });
+                    return;
+                }
+                catch (RequestFailedException ex) when (ex.Status == 412)
+                {
+                    logger.LogWarning($"{blobPath}: concurrent write detected, retrying (attempt {attempt}/{MaxRetries})");
+                    await Task.Delay(RetryDelayMs(attempt));
+                }
+            }
+
+            throw new InvalidOperationException($"Failed to append {lines.Count} row(s) to {blobPath} after {MaxRetries} attempts due to repeated concurrent write conflicts.");
+        }
     }
 }
