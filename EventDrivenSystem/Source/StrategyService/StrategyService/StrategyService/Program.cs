@@ -1,4 +1,5 @@
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using StrategyService.Backtest;
@@ -6,6 +7,15 @@ using StrategyService.RedisConfig;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
+    // Needed for the %KAFKA_BROKER_URL% binding expression on the Alerts feature's new
+    // KafkaTrigger functions (PositionEntryFunction/PositionExitFunction) to resolve — matches
+    // AggregationService's and WarmUpService's own Program.cs, both of which need this for the
+    // same reason.
+    .ConfigureAppConfiguration(builder =>
+    {
+        builder.AddJsonFile("local.settings.json", optional: true, reloadOnChange: true)
+               .AddEnvironmentVariables();
+    })
     .ConfigureServices(services =>
     {
         services.AddApplicationInsightsTelemetryWorkerService();
@@ -13,7 +23,8 @@ var host = new HostBuilder()
 
         // First Redis dependency this service has ever had — added for the Rule Engine page
         // (GetRuleStatus), which needs to read live indicator/session state to evaluate rules
-        // against. Still read-only: this service never writes to Redis.
+        // against. No longer read-only: the Alerts feature's position-lifecycle functions now write
+        // Position:Strategy:{id} hashes and push onto Alert:Feed:{date} too.
         services.AddSingleton<RedisHelper>();
 
         // First HTTP-out dependency this service has ever had — added for the Backtest engine,

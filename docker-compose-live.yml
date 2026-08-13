@@ -283,6 +283,7 @@ services:
       "TZ": "Asia/Kolkata"
       "RedisConnectionString": "redis-live:6379"
       "OhlcApiBase": "http://ohlc-live"
+      "KAFKA_BROKER_URL": "kafka-live:29092"
     volumes:
       # bind-mounted (not baked into the image) so strategies added/edited via the API
       # land as real files in the repo, and new files dropped in here need no rebuild
@@ -291,6 +292,7 @@ services:
       - azurite-live
       - redis-live
       - ohlc-live
+      - kafka-live
     restart: unless-stopped
     networks:
       - live-network

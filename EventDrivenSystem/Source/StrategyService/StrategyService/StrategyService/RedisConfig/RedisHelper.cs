@@ -6,9 +6,12 @@ namespace StrategyService.RedisConfig
 {
     // StrategyService's first Redis dependency — it was a pure CRUD-over-files service until the
     // Rule Engine page needed to read live indicator/session state to evaluate rules against.
-    // Read-only: this service still never writes to Redis, it only reads what WarmUpService and
-    // AggregationService already maintain. Mirrors every other service's RedisHelper connection
-    // setup in this repo (NotificationService/AggregationService/WarmUpService).
+    // Mirrors every other service's RedisHelper connection setup in this repo
+    // (NotificationService/AggregationService/WarmUpService).
+    //
+    // Was read-only until the Alerts feature: PositionEntryFunction/PositionExitFunction now write
+    // Position:Strategy:{id} hashes and push alert records onto Alert:Feed:{date} — the writer
+    // methods below are ported verbatim from AggregationService's own RedisHelper.
     public class RedisHelper
     {
         private readonly ILogger<RedisHelper> _logger;
@@ -54,6 +57,33 @@ namespace StrategyService.RedisConfig
                 return (key.ToString(), await GetHashAsync(key.ToString()));
             }
             return null;
+        }
+
+        public async Task SetHashAsync(string key, HashEntry[] entries, TimeSpan expiry)
+        {
+            IDatabase db = _redis.GetDatabase();
+            await db.HashSetAsync(key, entries);
+            await db.KeyExpireAsync(key, expiry);
+        }
+
+        /// <summary>
+        /// Pushes `value` onto the right end of the List at `key`, trims it down to the last
+        /// `maxLength` entries, and refreshes its TTL — same RPUSH+LTRIM+expire shape
+        /// AggregationService's RedisHelper already uses for its own rolling-window state, reused
+        /// here for the Alert:Feed:{date} daily list.
+        /// </summary>
+        public async Task PushToListAsync(string key, string value, int maxLength, TimeSpan expiry)
+        {
+            IDatabase db = _redis.GetDatabase();
+            await db.ListRightPushAsync(key, value);
+            await db.ListTrimAsync(key, -maxLength, -1);
+            await db.KeyExpireAsync(key, expiry);
+        }
+
+        public async Task<RedisValue[]> GetListRangeAsync(string key, long start = 0, long stop = -1)
+        {
+            IDatabase db = _redis.GetDatabase();
+            return await db.ListRangeAsync(key, start, stop);
         }
     }
 }

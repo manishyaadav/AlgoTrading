@@ -249,6 +249,7 @@ Route prefix: `api` (default). All responses are JSON, camelCase, with permissiv
 | GET | `/api/strategies/{id}/rule-status` | The deployed rule tree evaluated against live Redis state — see above |
 | GET | `/api/session-status` | The holiday/weekend gate, common to every deployed strategy — see above |
 | POST | `/api/strategies/{id}/backtest` | Simulate the strategy's saved draft against historical OHLC data — see above |
+| GET | `/api/alerts` | Today's per-strategy virtual positions + attributed alert log — see "Alerts" below |
 | PUT / POST | `/api/strategies/{id}` | Create or overwrite — body is validated as parseable JSON before writing; `Version` is server-computed (see above), `DeployedVersion` carries over unchanged; on-disk file is re-serialized in PascalCase regardless of what casing was sent |
 | POST | `/api/strategies/{id}/deploy` | Set `DeployedVersion` = current `Version`. No other side effects yet |
 | DELETE | `/api/strategies/{id}` | Delete that strategy entirely — every version file in `saved/` plus the current `deployed/` file, if any |
@@ -261,6 +262,46 @@ curl http://localhost:8096/api/strategies/second-income
 curl -X PUT http://localhost:8096/api/strategies/my-strategy -H "Content-Type: application/json" -d '{"Exchange":"NSE","StrategyName":"My Strategy","Broker":"Zerodha","Goals":[],"Strategies":[]}'
 curl -X POST http://localhost:8096/api/strategies/my-strategy/deploy
 curl -X DELETE http://localhost:8096/api/strategies/my-strategy
+```
+
+## Alerts
+
+`GET /api/alerts` backs the dashboard's Alerts page. It bundles two things in one response:
+
+- **`positions`** — one entry per deployed strategy, a *virtual/paper* position, not a real order.
+  `Status` is `NotTrackable` (no Supertrend/Adaptive Supertrend reference in that strategy's Entry
+  rules), `NotYetEntered`, `Open`, or `Flat`. Entry is the simple rule the feature was asked for: as
+  soon as the first bar of the day closes for that strategy's own Supertrend timeframe (derived —
+  `WindowsStartTime.TimeOfDay == 9:15`, no hardcoded "9:20"), side = that bar's Supertrend color,
+  entry price from `Candle:Last1Min:{Ticker}` (not the Supertrend event's own `Value`, which is the
+  band, not price — see `PositionEntryFunction.cs`'s own comment for why that distinction matters).
+  `InitialStopLoss = |EntryPrice - Supertrend value at entry|`, in raw index points — like Backtest,
+  this codebase deliberately has no lot-size/capital model to turn that into currency; `LotSize`
+  (`Common/InstrumentMapper.cs`: NIFTY 65, BANKNIFTY 15) is stored/displayed only, never multiplied
+  into anything. Exit evaluates the strategy's **real** `ExitRules` live (`Position/ExitRuleEvaluator.cs`)
+  — the first time this codebase resolves `Current Profit`/`Initial Stop Loss`/`Time in Trade`/
+  `Trading Session State`/1-minute `Candle Low`/`Candle High` against anything real, instead of the
+  `isLive:false` stub `Engine/RuleEvaluator.cs` still uses elsewhere. `RiskManagementRules` (needs
+  "Allocated Capital", which has no backing anywhere) and `UpdateStopLossRules` (a trailing-SL
+  concept, not what was asked for) are deliberately never evaluated, same precedent `Backtest`
+  already set. After an exit, the position re-enters on the next genuine Supertrend flip (not merely
+  "still the same color") rather than staying flat for the rest of the day.
+- **`alerts`** — up to the 200 most recent entries from Redis list `Alert:Feed:{today}` (IST),
+  reverse-chronological. Two independently-written record shapes share this one list (no shared
+  project reference — see `AggregationService/README.md`'s "Alert feed" section for the indicator
+  side): indicator-sourced signals get their strategy attribution resolved here, at read time, via
+  `Alerts/AlertAttributionResolver.cs` (reuses `StrategyMaker.GetDeployedDataRequirements()`, does
+  not re-walk every rule tree); position-entered/exited events already carry their `StrategyId`/
+  `StrategyName` from write time.
+
+New for this service: its first Kafka **consumers** (`Position/PositionEntryFunction.cs` on
+`live-indicator-supertrend-topic`/`live-indicator-adaptive-supertrend-topic`,
+`Position/PositionExitFunction.cs` on `live-dataingestion-ohlc-topic`, own consumer groups) and
+first Redis **writes** (`Position:Strategy:{id}` hash, `Alert:Feed:{date}` list) — until now this
+service only read from Redis and only ever served HTTP.
+
+```bash
+curl http://localhost:8096/api/alerts
 ```
 
 ## Operations

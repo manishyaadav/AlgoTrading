@@ -160,6 +160,10 @@ function showPage(key) {
   if (target === "backtest") {
     loadBacktestForm();
   }
+
+  if (target === "alerts") {
+    loadAlerts();
+  }
 }
 
 NAV_ITEMS.forEach(btn => {
@@ -874,6 +878,7 @@ async function refresh() {
     loadAggregationStatus(),
     loadIndicatorsStatus(),
     loadRuleEngine(),
+    loadAlerts(),
   ]);
   applyPhase();
   document.getElementById("stamp").title = `Data last refreshed ${new Date().toLocaleTimeString()}`;
@@ -2244,3 +2249,124 @@ async function runBacktest() {
 }
 
 document.getElementById("bt-run").addEventListener("click", runBacktest);
+
+// --- Alerts page (talks to strategy-live's published port directly from the browser, same as
+// Rule Engine) — a positions strip (one card per deployed strategy) plus a reverse-chronological
+// log of Supertrend/EMA signals, both from one GET /api/alerts call. ---
+
+let alertsLastPayload = null;
+
+// Raw Redis vocabulary is "Up"/"Down" (see AggregationService's calculators) — translated to the
+// GREEN/RED the rest of this dashboard already uses only here, at display time, same boundary
+// RuleEvaluator.cs draws server-side for its own live reads.
+function alertsDirLabel(direction) {
+  if (direction === "Up") return "GREEN";
+  if (direction === "Down") return "RED";
+  return direction || "—";
+}
+function alertsDirClass(direction) {
+  return direction === "Up" ? "up" : direction === "Down" ? "down" : "none";
+}
+
+const ALERTS_STATUS_LABEL = {
+  Open: "In position", Flat: "Flat", NotYetEntered: "Not yet entered today", NotTrackable: "Not tracked (no Supertrend rule)",
+};
+
+function alertsPositionCardHtml(p) {
+  const statusClass = p.status === "Open" ? "open" : p.status === "Flat" ? "flat" : p.status === "NotYetEntered" ? "not-yet-entered" : "not-trackable";
+  const sideClass = p.side === "Long" ? "long" : p.side === "Short" ? "short" : "";
+
+  let body;
+  if (p.status === "NotTrackable") {
+    body = `<div class="hint">This strategy's Entry rules don't reference a Supertrend/Adaptive Supertrend instance — nothing to track.</div>`;
+  } else if (p.status === "NotYetEntered") {
+    body = `<div class="hint">Waiting for the first candle of the day to close.</div>`;
+  } else {
+    const profitClass = p.currentProfit == null ? "" : p.currentProfit >= 0 ? "pass" : "fail";
+    body = `
+      <div class="alerts-position-row">
+        <span class="alerts-side ${sideClass}">${esc(p.side || "—")}</span>
+        <span>Lot size ${esc(p.lotSize)}</span>
+      </div>
+      <div class="alerts-position-row"><span>Entry</span><span class="num">${p.entryPrice != null ? Number(p.entryPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} @ ${p.entryTime ? btFormatDateTime(p.entryTime) : "—"}</span></div>
+      <div class="alerts-position-row"><span>Initial Stop Loss</span><span class="num">${p.initialStopLoss != null ? Number(p.initialStopLoss).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} pts</span></div>
+      ${p.status === "Open" ? `
+      <div class="alerts-position-row"><span>Time in trade</span><span class="num">${esc(p.timeInTrade || "—")}</span></div>
+      <div class="alerts-position-row"><span>Current profit</span><span class="num ${profitClass}">${p.currentProfit != null ? Number(p.currentProfit).toLocaleString(undefined, { minimumFractionDigits: 2 }) + " pts" : "—"}</span></div>
+      ` : `
+      <div class="alerts-position-row"><span>Exit</span><span class="num">${p.exitPrice != null ? Number(p.exitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} @ ${p.exitTime ? btFormatDateTime(p.exitTime) : "—"}</span></div>
+      <div class="alerts-position-row"><span>Exit reason</span><span>${esc(p.exitReason || "—")}</span></div>
+      `}`;
+  }
+
+  return `
+    <div class="alerts-position-card">
+      <div class="alerts-position-head">
+        <span class="alerts-position-name">${esc(p.strategyName)}</span>
+        <span class="alerts-status ${statusClass}">${ALERTS_STATUS_LABEL[p.status] || esc(p.status)}</span>
+      </div>
+      <div class="hint">${esc(p.ticker || p.instrument || "")}</div>
+      ${body}
+    </div>`;
+}
+
+function alertsLogEntryHtml(a) {
+  const isPosition = a.kind === "PositionEvent";
+  const strategyLabel = isPosition
+    ? esc(a.strategyIds && a.strategyIds.length ? (a.strategyNames || []).join(", ") : "")
+    : esc((a.strategyNames || []).length ? a.strategyNames.join(", ") : "no deployed strategy");
+
+  let detail;
+  if (isPosition) {
+    const sideClass = a.side === "Long" ? "long" : a.side === "Short" ? "short" : "";
+    detail = a.alertType === "PositionEntered"
+      ? `Entered <span class="alerts-side ${sideClass}">${esc(a.side || "")}</span> at ${a.entryPrice != null ? Number(a.entryPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}`
+      : `Exited <span class="alerts-side ${sideClass}">${esc(a.side || "")}</span> at ${a.exitPrice != null ? Number(a.exitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} — ${esc(a.reason || "")}`;
+  } else if (a.alertType && a.alertType.includes("ColorChanged")) {
+    detail = `<span class="dir ${alertsDirClass(a.previousDirection)}">${alertsDirLabel(a.previousDirection)}</span> → <span class="dir ${alertsDirClass(a.direction)}">${alertsDirLabel(a.direction)}</span> (${Number(a.value).toLocaleString(undefined, { minimumFractionDigits: 2 })})`;
+  } else if (a.alertType && a.alertType.includes("FalsePenetration")) {
+    detail = `Wick crossed by ${a.penetratedPoints != null ? Number(a.penetratedPoints).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} pts, closed back <span class="dir ${alertsDirClass(a.direction)}">${alertsDirLabel(a.direction)}</span>`;
+  } else if (a.alertType === "PriceCrossedEma") {
+    detail = `Close ${Number(a.close).toLocaleString(undefined, { minimumFractionDigits: 2 })} crossed EMA ${Number(a.value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+  } else {
+    detail = `${a.previousValue != null ? Number(a.previousValue).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} → ${a.value != null ? Number(a.value).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}`;
+  }
+
+  return `
+    <div class="alerts-log-entry">
+      <div class="alerts-log-time">${esc(btFormatDateTime(a.windowsStartTime))}</div>
+      <div class="alerts-log-body">
+        <div class="alerts-log-type">${esc(a.alertType)} <span class="alerts-log-meta">${esc(a.reference || "")}${a.reference ? " · " : ""}${esc(a.timeframe || "")}</span></div>
+        <div>${detail}</div>
+        <div class="alerts-log-meta">${strategyLabel}${a.ticker ? " · " + esc(a.ticker) : ""}</div>
+      </div>
+    </div>`;
+}
+
+async function loadAlerts() {
+  const posEl = document.getElementById("alerts-positions");
+  const logEl = document.getElementById("alerts-log");
+  const errEl = document.getElementById("alerts-error");
+  try {
+    const data = await fetchJson(`${STRATEGY_API_BASE}/api/alerts`);
+
+    // Same payload-diff-before-render pattern loadRuleEngine() uses — an unchanged 5s tick (the
+    // common case between bar closes) should touch the DOM not at all.
+    const payload = JSON.stringify(data);
+    if (payload !== alertsLastPayload) {
+      alertsLastPayload = payload;
+
+      posEl.innerHTML = (data.positions || []).length
+        ? data.positions.map(alertsPositionCardHtml).join("")
+        : `<div class="hint">No deployed strategy yet — deploy one from the Strategy page first.</div>`;
+
+      logEl.innerHTML = (data.alerts || []).length
+        ? data.alerts.map(alertsLogEntryHtml).join("")
+        : `<div class="hint">No alerts yet today — indicator changes and position events will appear here as bars close.</div>`;
+    }
+    errEl.hidden = true;
+  } catch (err) {
+    errEl.hidden = false;
+    errEl.textContent = `Unable to load: ${err.message}`;
+  }
+}

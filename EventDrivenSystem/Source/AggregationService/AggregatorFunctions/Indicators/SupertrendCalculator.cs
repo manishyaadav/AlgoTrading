@@ -15,7 +15,11 @@ namespace AggregatorFunctions.Indicators
     {
         // Returns null (a genuine no-op) if the Hash isn't there or isn't seeded yet — same reasoning
         // as EmaCalculator: a live candle alone can't seed Supertrend, only WarmUpService can.
-        public static async Task<(string Direction, decimal Value)?> UpdateAsync(
+        //
+        // Returns PrevDirection/PrevValue alongside the new ones — both already in local scope by the
+        // time this returns (read from the same hash the new state overwrites), so a caller wanting to
+        // detect a color flip or a value change (Alerts feature) gets both for free, no second read.
+        public static async Task<(string Direction, decimal Value, string PrevDirection, decimal PrevValue)?> UpdateAsync(
             RedisHelper redisHelper, string runningKey, string windowKey, int period, decimal multiplier,
             decimal high, decimal low, decimal close, DateTime windowsStartTime, int ttlDays)
         {
@@ -58,6 +62,11 @@ namespace AggregatorFunctions.Indicators
             string direction = nowTrackingUpper ? "Down" : "Up";
             decimal value = nowTrackingUpper ? finalUpper : finalLower;
 
+            // The band that was actually "the ST value" before this update — same "which band is
+            // active" logic RuleEvaluator.cs applies at its own read site, computed here from the
+            // pre-update prevDirection/prevUpper/prevLower already in scope.
+            decimal prevValue = prevDirection == "Down" ? prevUpper : prevLower;
+
             await redisHelper.SetHashAsync(runningKey, new HashEntry[]
             {
                 new("TrendDirection", direction),
@@ -69,7 +78,7 @@ namespace AggregatorFunctions.Indicators
                 new("LastBarWindowsStartTime", windowsStartTime.ToString("yyyy-MM-ddTHH:mm:ss")),
             }, TimeSpan.FromDays(ttlDays));
 
-            return (direction, value);
+            return (direction, value, prevDirection, prevValue);
         }
 
         private static decimal ExtractTrueRange(string json)

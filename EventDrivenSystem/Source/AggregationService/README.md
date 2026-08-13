@@ -16,8 +16,30 @@ Kafka-triggered Azure Function. Rolls 1-minute OHLC candles (from `dataingestion
 | `PriceObservsorForMarkingFunction` | `mock--candle-aggregation-5min-20period-topic` | swing/pivot marking output | `mock-candle-5min-price-for-swing-observor` |
 | `MockAggregation5MinutesFunction` | `mock-dataingestion-ohlc-topic` | — | `mock-dataingestion-5min-aggregator` |
 | `IndicatorDispatcher{5,10,15,30,60,75}MinFunction` | that timeframe's own `live-aggregation-ohlc-{N}min-topic` | `live-indicator-ema-topic`, `live-indicator-supertrend-topic` | `live-indicator-{N}min-dispatcher` |
+| `LatestMinuteCandleFunction` | `live-dataingestion-ohlc-topic` | — (writes `Candle:Last1Min:{Ticker}` to Redis) | `live-dataingestion-1min-cache-writer` |
 
 Anything prefixed `mock-` is for local testing against synthetic data, not the live pipeline. Watch the real flow in **Kafdrop (http://localhost:9000)**.
+
+## Alert feed (Alerts dashboard page)
+
+`Indicators/AlertFeedWriter.cs` pushes a JSON record onto Redis list `Alert:Feed:{yyyy-MM-dd}`
+(IST, RPUSH+LTRIM to the last 5000, 3-day TTL) every time `IndicatorDispatcher.cs` detects an
+EMA/Supertrend/Adaptive Supertrend change worth surfacing — "value changed" (fires most bars, since
+EMA/a Supertrend ratchet almost always moves), "color changed" (a genuine `TrendDirection` flip),
+and "false penetration" (a wick crosses the ST line against the trend but Close pulls back on-side
+— same RED/GREEN formula `StrategyService`'s Backtest engine already uses, ported to live) for
+Supertrend/Adaptive Supertrend; "value changed" and "price crossed EMA" for EMA. These records carry
+no strategy attribution — this service has no knowledge of strategies, only of raw indicator
+instances — `StrategyService`'s `GET /api/alerts` resolves that at read time. `EmaCalculator.cs`
+gained a `LastClose` field on its Redis hash (also seeded by `WarmUpService`'s `EmaSeeder.cs`) so a
+price-crossed-EMA check has a previous Close to compare against from the very first live update.
+`SupertrendCalculator.cs`/`AdaptiveSupertrendCalculator.cs` now also return the previous direction/
+value alongside the new ones — both were already in local scope by the time `UpdateAsync` returns,
+so detecting a change costs nothing extra.
+
+`StrategyService`'s Alerts feature (position entry/exit) also reads these same Kafka topics
+(`live-indicator-supertrend-topic`/`live-indicator-adaptive-supertrend-topic`) and `Candle:Last1Min`
+— see its own README.
 
 ## Live indicator calculators
 

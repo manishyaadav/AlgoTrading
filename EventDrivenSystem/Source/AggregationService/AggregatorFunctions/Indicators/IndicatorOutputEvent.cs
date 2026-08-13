@@ -39,6 +39,13 @@ namespace AggregatorFunctions.Indicators
         [JsonPropertyName("Direction")]
         public string? Direction { get; set; }
 
+        // Added for the Alerts feature — StrategyService's PositionEntryFunction needs to tell "this
+        // bar is a genuine flip" (Direction != PreviousDirection) apart from "still the same color
+        // as before" without a second Redis read; null for EMA (no direction concept) and for a
+        // Supertrend/Adaptive Supertrend instance's very first live update after seeding.
+        [JsonPropertyName("PreviousDirection")]
+        public string? PreviousDirection { get; set; }
+
         [JsonPropertyName("WindowsStartTime")]
         public DateTime WindowsStartTime { get; set; }
     }
