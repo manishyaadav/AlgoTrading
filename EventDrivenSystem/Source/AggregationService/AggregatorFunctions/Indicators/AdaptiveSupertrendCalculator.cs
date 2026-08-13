@@ -15,7 +15,10 @@ namespace AggregatorFunctions.Indicators
         // Returns null (a genuine no-op) if the Hash isn't there or isn't seeded yet — same reasoning
         // as SupertrendCalculator: a live candle alone can't seed this, only WarmUpService can (it
         // needs atrLength + 100 bars of history just to fill the K-Means training window once).
-        public static async Task<(string Direction, decimal Value)?> UpdateAsync(
+        //
+        // Returns PrevDirection/PrevValue alongside the new ones, same rationale as
+        // SupertrendCalculator's own version of this change — both already in scope, no second read.
+        public static async Task<(string Direction, decimal Value, string PrevDirection, decimal PrevValue)?> UpdateAsync(
             RedisHelper redisHelper, string runningKey, string windowKey, int atrLength, decimal factor,
             decimal high, decimal low, decimal close, DateTime windowsStartTime, int ttlDays)
         {
@@ -68,6 +71,7 @@ namespace AggregatorFunctions.Indicators
 
             string direction = nowTrackingUpper ? "Down" : "Up";
             decimal value = nowTrackingUpper ? finalUpper : finalLower;
+            decimal prevValue = prevDirection == "Down" ? prevUpper : prevLower;
 
             await redisHelper.SetHashAsync(runningKey, new HashEntry[]
             {
@@ -85,7 +89,7 @@ namespace AggregatorFunctions.Indicators
                 new("LastBarWindowsStartTime", windowsStartTime.ToString("yyyy-MM-ddTHH:mm:ss")),
             }, TimeSpan.FromDays(ttlDays));
 
-            return (direction, value);
+            return (direction, value, prevDirection, prevValue);
         }
 
         private static decimal ExtractAtr(string json)

@@ -47,13 +47,19 @@ namespace AggregatorFunctions.Indicators
             {
                 if (string.Equals(instance.Reference, "EMA", StringComparison.OrdinalIgnoreCase))
                 {
-                    var value = await EmaCalculator.UpdateAsync(_redisHelper, RunningKey(instance), instance.Period, bar.Close, bar.WindowsStartTime, IndicatorStateTtlDays);
-                    if (value == null)
+                    var result = await EmaCalculator.UpdateAsync(_redisHelper, RunningKey(instance), instance.Period, bar.Close, bar.WindowsStartTime, IndicatorStateTtlDays);
+                    if (result == null)
                     {
                         _logger.LogInformation("EMA {Instrument} {Timeframe}({Period}) — not seeded yet, skipping live update.", instance.Instrument, instance.Timeframe, instance.Period);
                         continue;
                     }
-                    await PublishAsync(EmaTopic, instance, value.Value, null, bar.WindowsStartTime);
+                    await PublishAsync(EmaTopic, instance, result.Value.NewEma, null, null, bar.WindowsStartTime);
+
+                    await AlertFeedWriter.WriteEmaValueChangedAsync(_redisHelper, instance, result.Value.NewEma, result.Value.PrevEma, bar.Close, bar.WindowsStartTime);
+                    if (result.Value.PrevClose.HasValue)
+                    {
+                        await AlertFeedWriter.WriteEmaPriceCrossAsync(_redisHelper, instance, result.Value.NewEma, bar.Close, result.Value.PrevClose.Value, result.Value.PrevEma, bar.WindowsStartTime);
+                    }
                 }
                 else if (string.Equals(instance.Reference, "Supertrend", StringComparison.OrdinalIgnoreCase))
                 {
@@ -65,7 +71,11 @@ namespace AggregatorFunctions.Indicators
                         _logger.LogInformation("Supertrend {Instrument} {Timeframe}({Period},{Multiplier}) — not seeded yet, skipping live update.", instance.Instrument, instance.Timeframe, instance.Period, instance.Multiplier);
                         continue;
                     }
-                    await PublishAsync(SupertrendTopic, instance, result.Value.Value, result.Value.Direction, bar.WindowsStartTime);
+                    await PublishAsync(SupertrendTopic, instance, result.Value.Value, result.Value.Direction, result.Value.PrevDirection, bar.WindowsStartTime);
+
+                    await AlertFeedWriter.WriteSupertrendAlertsAsync(_redisHelper, instance,
+                        result.Value.Direction, result.Value.Value, result.Value.PrevDirection, result.Value.PrevValue,
+                        bar.High, bar.Low, bar.Close, bar.WindowsStartTime);
                 }
                 else if (string.Equals(instance.Reference, "Adaptive Supertrend", StringComparison.OrdinalIgnoreCase))
                 {
@@ -77,7 +87,11 @@ namespace AggregatorFunctions.Indicators
                         _logger.LogInformation("Adaptive Supertrend {Instrument} {Timeframe}({Period},{Multiplier}) — not seeded yet, skipping live update.", instance.Instrument, instance.Timeframe, instance.Period, instance.Multiplier);
                         continue;
                     }
-                    await PublishAsync(AdaptiveSupertrendTopic, instance, result.Value.Value, result.Value.Direction, bar.WindowsStartTime);
+                    await PublishAsync(AdaptiveSupertrendTopic, instance, result.Value.Value, result.Value.Direction, result.Value.PrevDirection, bar.WindowsStartTime);
+
+                    await AlertFeedWriter.WriteSupertrendAlertsAsync(_redisHelper, instance,
+                        result.Value.Direction, result.Value.Value, result.Value.PrevDirection, result.Value.PrevValue,
+                        bar.High, bar.Low, bar.Close, bar.WindowsStartTime);
                 }
                 // Pivot Central Range never appears in the manifest — WarmUpService deliberately
                 // excludes it (no live phase per the plan doc), so no branch is needed for it here.
@@ -87,7 +101,7 @@ namespace AggregatorFunctions.Indicators
         private static string RunningKey(ActiveIndicatorInstance i) => $"Indicator:Running:{i.Instrument}:{i.Timeframe}:{i.Reference}:{i.Period}:{i.Multiplier}";
         private static string WindowKey(ActiveIndicatorInstance i) => $"Indicator:Window:{i.Instrument}:{i.Timeframe}:{i.Reference}:{i.Period}:{i.Multiplier}";
 
-        private async Task PublishAsync(string topic, ActiveIndicatorInstance instance, decimal value, string? direction, DateTime windowsStartTime)
+        private async Task PublishAsync(string topic, ActiveIndicatorInstance instance, decimal value, string? direction, string? previousDirection, DateTime windowsStartTime)
         {
             var indianNow = DateTimeHelper.ConvertToIndianTime(DateTime.UtcNow);
             var evt = new IndicatorOutputEvent
@@ -101,6 +115,7 @@ namespace AggregatorFunctions.Indicators
                 Multiplier = instance.Multiplier,
                 Value = value,
                 Direction = direction,
+                PreviousDirection = previousDirection,
                 WindowsStartTime = windowsStartTime,
                 Producer = "aggregator.indicator.service",
                 ProducedAt = DateTimeHelper.ToIsoStringWithTime(indianNow),

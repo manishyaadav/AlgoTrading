@@ -17,7 +17,7 @@ A left sidebar (collapses to a horizontal icon bar below 700px) lists 8 pages, s
 | Data Sync | Placeholder |
 | Backtest | Placeholder |
 | Broker Configuration | Placeholder |
-| Alerts / Signals | Placeholder |
+| Alerts / Signals | Live — virtual per-strategy positions + a Supertrend/EMA signal log, from `strategy-live`'s `GET /api/alerts` |
 
 The still-placeholder pages are just static markup in `wwwroot/index.html` (`<div class="page" data-page="...">`) with a "not wired up yet" note — no backend endpoints exist for them yet. When one of those areas gets built out, add its real content to the matching `.page` div; the nav wiring, hash routing, and active-state styling need no changes.
 

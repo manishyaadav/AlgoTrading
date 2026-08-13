@@ -1693,3 +1693,72 @@ th, .rules-group-label, .sub-section-label, .category-count, .timeline-label,
 @media (max-width: 700px) {
   .backtest-form { flex-direction: column; align-items: stretch; }
 }
+
+/* Alerts page — a positions strip (one card per deployed strategy) plus a reverse-chronological
+   log of Supertrend/EMA signals and position entries/exits, both from one GET /api/alerts poll. */
+.alerts-position-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.alerts-position-card {
+  background: var(--surface);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.alerts-position-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 4px;
+}
+.alerts-position-name {
+  font-family: Archivo, sans-serif; font-variation-settings: "wdth" 108, "wght" 650;
+  font-size: 13px;
+}
+.alerts-status {
+  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500;
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.alerts-status.open { background: var(--green-bg); color: var(--green); }
+.alerts-status.flat { background: var(--panel-2); color: var(--muted); }
+.alerts-status.not-yet-entered { background: var(--yellow-bg); color: var(--yellow); }
+.alerts-status.not-trackable { color: var(--muted); }
+.alerts-position-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; padding: 5px 0; border-top: 1px solid var(--border);
+}
+.alerts-position-row .num { font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.alerts-position-row .num.pass { color: var(--green); }
+.alerts-position-row .num.fail { color: var(--red); }
+.alerts-side {
+  font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500;
+  padding: 1px 8px; border-radius: 999px;
+}
+.alerts-side.long { background: var(--green-bg); color: var(--green); }
+.alerts-side.short { background: var(--red-bg); color: var(--red); }
+
+.alerts-log {
+  display: flex; flex-direction: column; gap: 1px;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  max-height: 560px; overflow-y: auto;
+}
+.alerts-log-entry {
+  display: flex; gap: 14px; padding: 10px 16px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.alerts-log-entry:last-child { border-bottom: none; }
+.alerts-log-time {
+  flex-shrink: 0; width: 90px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11.5px; padding-top: 1px;
+}
+.alerts-log-body { min-width: 0; flex: 1; }
+.alerts-log-type { font-weight: 500; margin-bottom: 2px; }
+.alerts-log-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.alerts-log .dir { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; font-weight: 500; }
+.alerts-log .dir.up { background: var(--green-bg); color: var(--green); }
+.alerts-log .dir.down { background: var(--red-bg); color: var(--red); }
+.alerts-log .dir.none { color: var(--muted); }

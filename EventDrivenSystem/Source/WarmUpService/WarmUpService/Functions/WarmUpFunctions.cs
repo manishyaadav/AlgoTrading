@@ -310,6 +310,7 @@ namespace WarmUpService.Functions
             await _redisHelper.SetHashAsync(key, new HashEntry[]
             {
                 new("LastEma", seed.LastEma.ToString(CultureInfo.InvariantCulture)),
+                new("LastClose", seed.LastClose?.ToString(CultureInfo.InvariantCulture) ?? ""),
                 new("SeedBarsSeenSoFar", seed.SeedBarsSeenSoFar.ToString(CultureInfo.InvariantCulture)),
                 new("IsSeeded", "true"),
                 new("LastBarWindowsStartTime", seed.LastBarWindowsStartTime?.ToString("yyyy-MM-ddTHH:mm:ss") ?? ""),

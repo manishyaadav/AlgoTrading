@@ -4,7 +4,11 @@ namespace WarmUpService.Indicators
 {
     // { LastEma, SeedBarsSeenSoFar, IsSeeded } — WARMUP_AND_INDICATOR_PLAN.md section 2e's exact
     // state shape. Tiny by design: EMA needs no candle history once seeded, just the running value.
-    public record EmaState(decimal LastEma, int SeedBarsSeenSoFar, bool IsSeeded, DateTime? LastBarWindowsStartTime);
+    //
+    // LastClose added for the Alerts feature (AggregationService/EmaCalculator.cs's own live-side
+    // counterpart) — the seeded bar's own Close, so the very first live update after warm-up already
+    // has something to compare against for "did price just cross EMA", not just the second one.
+    public record EmaState(decimal LastEma, int SeedBarsSeenSoFar, bool IsSeeded, DateTime? LastBarWindowsStartTime, decimal? LastClose);
 
     public static class EmaSeeder
     {
@@ -21,7 +25,7 @@ namespace WarmUpService.Indicators
         public static EmaState Seed(List<HistoricalBar> bars, int period)
         {
             if (period <= 0 || bars.Count < period)
-                return new EmaState(0, bars.Count, false, bars.Count > 0 ? bars[^1].WindowsStartTime : null);
+                return new EmaState(0, bars.Count, false, bars.Count > 0 ? bars[^1].WindowsStartTime : null, bars.Count > 0 ? bars[^1].Close : null);
 
             decimal ema = bars.Take(period).Average(b => b.Close);
             decimal multiplier = 2m / (period + 1);
@@ -29,7 +33,7 @@ namespace WarmUpService.Indicators
             for (int i = period; i < bars.Count; i++)
                 ema = (bars[i].Close - ema) * multiplier + ema;
 
-            return new EmaState(ema, period, true, bars[^1].WindowsStartTime);
+            return new EmaState(ema, period, true, bars[^1].WindowsStartTime, bars[^1].Close);
         }
     }
 }

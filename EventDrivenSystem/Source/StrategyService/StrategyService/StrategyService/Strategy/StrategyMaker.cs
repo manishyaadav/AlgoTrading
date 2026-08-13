@@ -157,6 +157,14 @@ namespace StrategyService.Strategy
         public static Strategy? GetDeployedById(string id)
             => LoadAllFrom(DeployedConfigFolder).FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)).Strategy;
 
+        /// <summary>
+        /// Every currently-deployed strategy, id + rule content together — used by the Alerts
+        /// feature's position-lifecycle functions and by GET /api/alerts to enumerate "what's
+        /// deployed right now" without each caller re-implementing the deployed-folder scan.
+        /// </summary>
+        public static IEnumerable<(string Id, Strategy Strategy)> GetAllDeployed()
+            => LoadAllFrom(DeployedConfigFolder);
+
         private static string? GetDeployedVersionForId(string id)
         {
             var file = FindFileForId(id, DeployedConfigFolder);
